@@ -8,9 +8,12 @@ that had closed by DRIFT_WEEK.
 
 from ..agents import archaeologist, planner
 from ..contracts import CandidateProfile, Plan
+from ..market import clock
 
 
 def run(candidate: CandidateProfile) -> Plan:
     inventory = archaeologist.extract(candidate)
-    chosen = planner.target(inventory, week=0)
+    # Week 0's market and never another one. That is the whole point of the
+    # baseline: it sees the market once, at the start, and never looks again.
+    chosen = planner.target(inventory, clock.snapshot(0), week=0)
     return planner.plan(chosen, week=0)

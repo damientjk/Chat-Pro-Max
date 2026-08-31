@@ -11,11 +11,13 @@ from ..contracts import CandidateProfile, Capability, SkillInventory
 
 def extract(candidate: CandidateProfile) -> SkillInventory:
     # TODO(R3): prompt the model with candidate.history and ask for
-    # capabilities + the evidence line for each. Structured output via pydantic.
+    # capabilities + the evidence line for each. Structured output via
+    # llm.with_structured_output(SkillInventory) — that is why the shapes in
+    # contracts.py are pydantic models.
     return SkillInventory(
         capabilities=[
-            Capability("vendor contract management", "stub: managed 3PL SLAs"),
-            Capability("data reconciliation", "stub: monthly stock variance"),
-            Capability("stakeholder escalation", "stub: ran carrier disputes"),
+            Capability(skill="vendor contract management", evidence="stub: managed 3PL SLAs"),
+            Capability(skill="data reconciliation", evidence="stub: monthly stock variance"),
+            Capability(skill="stakeholder escalation", evidence="stub: ran carrier disputes"),
         ]
     )

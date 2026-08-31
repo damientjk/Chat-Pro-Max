@@ -18,6 +18,7 @@ def route(state: CaseState) -> str:
     """Return the name of the next step. One decision, all in one place."""
     week = state["week"]
     target = state.get("target")
+    market = state.get("market")
 
     if state.get("done"):
         return "end"
@@ -25,7 +26,7 @@ def route(state: CaseState) -> str:
         return "end"
 
     # --- adaptation event 1: the target stopped hiring --------------------
-    if target and target.reachable and clock.has_drifted(target.title, week):
+    if target and market and target.reachable and clock.has_drifted(market, target.title):
         return "drift"
 
     # --- adaptation event 2: the rejections share a shape -----------------

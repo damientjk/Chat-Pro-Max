@@ -19,9 +19,12 @@ def initial_state() -> CaseState:
     return {
         "candidate": DEMO,
         "week": 0,
+        # Week 0's market, so the target node has one before advance_week runs.
+        "market": clock.snapshot(0),
         "applications": [],
         "events": [],
         "positioning": "",
+        "repositioned": False,
         "signal_from_week": 0,
         "done": False,
         "outcome": "",

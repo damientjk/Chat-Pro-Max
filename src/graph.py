@@ -39,16 +39,20 @@ def intake(state: CaseState) -> dict:
     inventory = archaeologist.extract(state["candidate"])
     return {
         "inventory": inventory,
-        "events": [Event(0, "intake", f"found {len(inventory.capabilities)} capabilities")],
+        "events": [
+            Event(week=0, kind="intake",
+                  summary=f"found {len(inventory.capabilities)} capabilities")
+        ],
     }
 
 
 def target(state: CaseState) -> dict:
-    chosen = planner.target(state["inventory"], state["week"])
+    chosen = planner.target(state["inventory"], state["market"], state["week"])
     return {
         "target": chosen,
         "events": [
-            Event(state["week"], "target", f"target: {chosen.title}", chosen.rationale)
+            Event(week=state["week"], kind="target",
+                  summary=f"target: {chosen.title}", because=chosen.rationale)
         ],
     }
 
@@ -57,7 +61,10 @@ def plan(state: CaseState) -> dict:
     p = planner.plan(state["target"], state["week"])
     return {
         "plan": p,
-        "events": [Event(state["week"], "plan", f"{len(p.steps)}-step plan to {p.target.title}")],
+        "events": [
+            Event(week=state["week"], kind="plan",
+                  summary=f"{len(p.steps)}-step plan to {p.target.title}")
+        ],
     }
 
 
@@ -69,23 +76,28 @@ def advance_week(state: CaseState) -> dict:
 def replan(state: CaseState) -> dict:
     """Adaptation event 1. The target stopped hiring; pick another and say why."""
     week = state["week"]
+    market = state["market"]
     old = state["target"]
-    postings = clock.snapshot(week).postings_by_role.get(old.title, 0)
+    postings = market.postings_by_role.get(old.title, 0)
 
+    # The planner sees the market, so the new target is whatever is actually
+    # hiring this week. Nothing is hardcoded here any more — this node states
+    # the change, it does not decide it.
+    #
     # TODO(R3): ask the planner for the next-best target given what they have
     # already learned — some of the training carries over, and saying so is
     # what makes this feel like a plan rather than a restart.
-    fresh = planner.target(state["inventory"], week)
-    fresh.title = "Logistics Systems Analyst"
-    fresh.rationale = "still hiring, and reuses the SQL work already done"
+    fresh = planner.target(state["inventory"], market, week)
 
     return {
         "target": fresh,
         "plan": planner.plan(fresh, week, supersedes=old.title),
         "events": [
-            Event(week, "drift", f"{old.title} postings fell to {postings}",
-                  "below the floor we set for a viable target"),
-            Event(week, "replan", f"switched to {fresh.title}", fresh.rationale),
+            Event(week=week, kind="drift",
+                  summary=f"{old.title} postings fell to {postings}",
+                  because="below the floor we set for a viable target"),
+            Event(week=week, kind="replan", summary=f"switched to {fresh.title}",
+                  because=fresh.rationale),
         ],
     }
 
@@ -94,27 +106,33 @@ def reposition(state: CaseState) -> dict:
     """Adaptation event 2. Every application died at screening — rewrite it."""
     week = state["week"]
     return {
-        "positioning": f"revised positioning for {state['target'].title}",
+        "positioning": placement.translate(
+            state["inventory"], state["plan"], repositioned=True
+        ),
+        "repositioned": True,  # a flag, never something to read back out of the prose
         "signal_from_week": week,  # old rejections no longer count
         "events": [
-            Event(week, "reposition", "rewrote how we describe their experience",
-                  "the last 3 applications all died at resume screening"),
+            Event(week=week, kind="reposition",
+                  summary="rewrote how we describe their experience",
+                  because="the last 3 applications all died at resume screening"),
         ],
     }
 
 
 def apply_step(state: CaseState) -> dict:
     week = state["week"]
-    repositioned = bool(state.get("positioning", "").startswith("revised"))
+    repositioned = state.get("repositioned", False)
     positioning = state.get("positioning") or placement.translate(
         state["inventory"], state["plan"]
     )
     outcomes = placement.apply(state["plan"], week, positioning, repositioned)
 
     got_offer = any(not o.rejected for o in outcomes)
-    events = [Event(week, "apply", f"{len(outcomes)} applications sent")]
+    events = [Event(week=week, kind="apply", summary=f"{len(outcomes)} applications sent")]
     if got_offer:
-        events.append(Event(week, "offer", f"offer: {state['target'].title}"))
+        events.append(
+            Event(week=week, kind="offer", summary=f"offer: {state['target'].title}")
+        )
 
     return {
         "applications": outcomes,

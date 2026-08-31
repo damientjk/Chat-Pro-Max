@@ -30,6 +30,11 @@ def snapshot(week: int) -> MarketSnapshot:
     )
 
 
-def has_drifted(target_title: str, week: int, floor: int = 30) -> bool:
-    """Deterministic, no model call, unit-testable. This drives a graph edge."""
-    return snapshot(week).postings_by_role.get(target_title, 0) < floor
+def has_drifted(market: MarketSnapshot, target_title: str, floor: int = 30) -> bool:
+    """Deterministic, no model call, unit-testable. This drives a graph edge.
+
+    Takes the week's snapshot rather than re-deriving it from the week number,
+    so the router judges drift against exactly the numbers the rest of the
+    graph is holding.
+    """
+    return market.postings_by_role.get(target_title, 0) < floor

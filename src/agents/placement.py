@@ -11,9 +11,17 @@ STUB — replace with real model calls. Keep the signatures.
 from ..contracts import ApplicationOutcome, Plan, SkillInventory, Stage
 
 
-def translate(inventory: SkillInventory, plan: Plan) -> str:
+def translate(
+    inventory: SkillInventory, plan: Plan, repositioned: bool = False
+) -> str:
     # TODO(R3): rewrite their experience in the target role's language, using
     # the evidence lines from the inventory.
+    #
+    # `repositioned` says this is the SECOND framing — the first one died at
+    # screening — so the prompt should be told that rather than producing the
+    # same text again and hoping for a different result.
+    if repositioned:
+        return f"stub positioning for {plan.target.title}, rewritten after screening rejections"
     return f"stub positioning for {plan.target.title}"
 
 
@@ -27,8 +35,22 @@ def apply(
     # then succeeds once the positioning has been rewritten. That is what
     # makes the second adaptation event visible in the demo.
     if repositioned:
-        return [ApplicationOutcome(week, plan.target.title, Stage.OFFER, False, "stub")]
+        return [
+            ApplicationOutcome(
+                week=week,
+                role_title=plan.target.title,
+                stage_reached=Stage.OFFER,
+                rejected=False,
+                notes="stub",
+            )
+        ]
     return [
-        ApplicationOutcome(week, plan.target.title, Stage.SCREENING, True, "stub")
+        ApplicationOutcome(
+            week=week,
+            role_title=plan.target.title,
+            stage_reached=Stage.SCREENING,
+            rejected=True,
+            notes="stub",
+        )
         for _ in range(3)
     ]
