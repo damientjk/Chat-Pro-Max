@@ -25,6 +25,28 @@ When you start making real model calls:
 cp .env.example .env      # then paste your Groq key
 ```
 
+## Providers — one environment variable
+
+Groq's free tier is the build-time provider: rate limited, not billed, no
+credentials to share. Bedrock is for the runs that get judged — the eval sweep
+and the recorded demo — where a rate limit mid-run would cost us something.
+
+```bash
+uv sync --extra aws
+export LLM_PROVIDER=bedrock
+export AWS_DEFAULT_REGION=ap-southeast-1
+```
+
+Nothing else changes. `_common.chat_model()` returns a LangChain model for
+whichever provider `LLM_PROVIDER` names, and both implement the same interface,
+so `.invoke()`, `.bind_tools()` and `.with_structured_output()` behave the same
+on either side.
+
+**That only stays true if sub-agents call `_common.chat_model()` and never
+`ChatGroq` directly.** Hardcode the provider into an agent and the switch is
+gone. Bedrock model access is granted per model and per region and is off by
+default — see [`PLAN.md`](PLAN.md) for the setup and the cost numbers.
+
 ## What it prints today
 
 ```
@@ -67,6 +89,9 @@ unit-testable without a key, and identical across every take of the demo video.
 [`PLAN.md`](PLAN.md) — day-by-day schedule, role split, gates, cut list, and the
 Q&A to rehearse. Read it before Wednesday.
 
+[`EXPLAINER.md`](EXPLAINER.md) — the same project with no jargon, for anyone
+non-technical: what it does, why it matters, and who is building which part.
+
 ## Layout — one owner per directory
 
 | Path | Owner | What |
@@ -94,6 +119,16 @@ grep -rn "TODO(R" src/
 
 Replacing a stub never requires touching the graph. That is the whole point of
 the shape.
+
+## Pinned dependencies
+
+`pyproject.toml` + `uv.lock` are the source of truth. `requirements.txt` is
+generated from them, because it is a named submission deliverable — regenerate
+it whenever dependencies change:
+
+```bash
+uv export --no-hashes --no-dev -o requirements.txt
+```
 
 ## Never commit
 

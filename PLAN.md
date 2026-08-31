@@ -11,6 +11,8 @@ Build window: **Wed 2 Sep → Sun 6 Sep**. Monday is buffer and upload, not buil
 
 Judging is 5 criteria at 20% each: benefits, originality, effectiveness, technical quality, presentation. **Only 20% is code.** Budget your time accordingly — this plan gives roughly equal weight to build and to narrative, on purpose.
 
+Confirmed against the 24 Aug deck (Session 3, pp. 29–31). Each criterion is scored **0 / 1 / 2**, so there is no partial credit for nearly working: "functional prototype with minor work needed for production" is 1 point, "partially functional" is 0. Note also that **no criterion mentions AWS, Bedrock or any platform** — see the provider section below before anyone spends a day on infrastructure that earns nothing.
+
 ## Where we are
 
 The repo is scaffolded and **already runs end to end** — 26 simulated weeks through a real LangGraph state machine, both adaptation events firing, with no API key needed. That was Day 1's original gate, so the schedule below starts a step ahead of where it would otherwise.
@@ -36,6 +38,44 @@ grep -rn "TODO(R" src/
 A 45-year-old is retrenched. Our agent works out what they can actually already do, picks a reachable adjacent role and costs it honestly, sequences the retraining — then **watches the job market weekly and re-plans when the target moves**. At the end it translates their experience into the new field's vocabulary, matches them to live openings, and treats every rejection as evidence that updates the plan.
 
 **The sentence that wins the room:** *"A recommender can suggest a course. It cannot notice in month three that the role you're training for stopped hiring — and rebuild the plan around what's still open."*
+
+---
+
+## Models, providers and the AWS credits
+
+**Build on Groq. Submit on Bedrock.**
+
+Groq's free tier is *rate limited, not billed* — perfect for five people iterating all week, with no credentials to share and no setup to go wrong. R1 holds **$20 of AWS credits**, which at the published Haiku 4.5 rate ($1 in / $5 out per million tokens, Session 1 deck p39) is on the order of 500 full 26-week runs. A single run costs roughly **4 cents**. Money is not the constraint.
+
+So spend the credits only where a rate limit would actually cost us something:
+
+| Run | Provider | Why |
+|---|---|---|
+| Day-to-day development | Groq | Free, no credentials, no per-person setup |
+| The eval sweep (6 personas × agent + baseline) | Bedrock | 12 runs back to back is exactly what a free tier throttles. ~$0.50 |
+| The recorded demo takes (Day 4) | Bedrock | A rate-limit error mid-take is an expensive way to learn about free tiers |
+
+There is also a quality argument for the runs that get judged: the Groq default is `openai/gpt-oss-20b`, a small model, and R3's targeting and archaeology depend on `.with_structured_output()` returning valid structured data every time. Small models are flakier at that. Use Haiku 4.5 for anything a judge sees.
+
+**The rule that makes the switch real — agreed at the Day 1 meeting:**
+
+> Sub-agents call `_common.chat_model()`. **Never `ChatGroq` directly.**
+
+That factory returns a LangChain model for whichever provider `LLM_PROVIDER` names, and both sides implement the same interface — so `.invoke()`, `.bind_tools()` and `.with_structured_output()` behave identically. Hardcode `ChatGroq` into the three agent files and the credits become unusable no matter what is in the account. One line of agreement now, or a refactor on Day 4.
+
+Switching, once the rule holds:
+
+```bash
+uv sync --extra aws
+export LLM_PROVIDER=bedrock
+export AWS_DEFAULT_REGION=ap-southeast-1
+```
+
+**The long pole is access, not money.** Bedrock model access is granted per model, per region, and is **off by default** (Session 1 deck p41) — Haiku 4.5 in `ap-southeast-1`. R1 must enable it and make one successful call **today**. An ungranted permission discovered on Day 4 is a lost afternoon; ruling it out tonight costs nothing.
+
+Guardrails: R1 sets an AWS Budget alert at ~$15, and nobody shares AWS keys in a channel — `.env` is gitignored for this reason.
+
+Free bonus for the deck: `_common.report_usage()` already prints per-call token counts, so R1 can put a **measured** cost-per-candidate on the Technical Quality slide. *"Each full six-month plan costs about four cents to produce"* is a claim judges cannot poke a hole in, because we measured it rather than estimated it.
 
 ---
 
@@ -89,6 +129,7 @@ It sits off the critical path — nothing else imports it — so if R1 gets pull
 - **R2** — create the GitHub remote, push, add all five as collaborators. Decide public vs. private (check whether the submission wants a link or a zip — private is fine if it is a zip).
 - **Everyone** — clone, `brew install uv`, `uv sync`, then confirm `uv run python -m src.run_demo` prints the timeline on **your own machine**. Five people, five machines; someone will have a broken Python or a permissions problem and you want that surfacing tonight, not in Wednesday's meeting.
 - **Everyone** — read `src/contracts.py` before the meeting. It is a draft written to be argued with, and the meeting is faster if nobody is reading it for the first time.
+- **R1** — **enable Bedrock model access** for the Haiku 4.5 model id pinned in `src/_common.py`, in `ap-southeast-1`, then prove it with one real call. It is off by default and is the one item here with a lead time we do not control. Set the AWS Budget alert at the same time.
 - **R1** — pull the real numbers from source: MOM Labour Market Report (retrenchment volume, re-entry rate within 6 months by age band), SkillsFuture participation. **Verify against the primary source with a date — do not cite from memory in front of judges.**
 
 Note: `~/.local/bin` is not on the PATH by default on macOS, so anyone installing uv via the curl script rather than Homebrew needs to add it.
@@ -107,6 +148,7 @@ Lock these and do not reopen them:
 2. The one candidate persona the demo follows
 3. Scope frozen against the cut list below
 4. **Review and freeze `src/contracts.py`** — it is drafted, so this is an editing job rather than a blank page. Change what is wrong, then freeze it. Every other module imports from it; an unannounced change on Day 3 costs the whole team an afternoon.
+5. **The provider rule** — sub-agents call `_common.chat_model()`, never `ChatGroq` directly. Ten seconds to agree, and it is what keeps Bedrock one environment variable away all week. See the provider section above.
 
 **Then split — everyone replaces their own stubs:**
 
@@ -160,9 +202,13 @@ If Day 2's gate passed, today is buffer — spend it on eval numbers, hardening 
 
 - **AM, everyone** — bug bash on the demo path only. Ignore bugs off the happy path.
 - **12:00** — freeze.
-- **R5 + R1 (PM)** — record the video. Structure: hook 0:30 → problem 0:30 → solution 0:30 → **demo 2:00** → impact 0:45 → close 0:45. Shoot more takes than you think you need.
-- **R2 + R3** — README: how to run, what each file does, `requirements.txt`, `.env` for secrets. In-line comments where the methodology shows up in code — judges check that the presented method is visible at code level.
-- **R4** — final eval numbers → hand to R1 for the benefits slide
+- **R5 + R1 (PM)** — record the video, running on **Bedrock** so a free-tier rate limit cannot spoil a take. Structure: hook 0:30 → problem 0:30 → solution 0:30 → **demo 2:00** → impact 0:45 → close 0:45. Shoot more takes than you think you need.
+- **R2 + R3** — README: how to run, what each file does, `.env` for secrets. In-line comments where the methodology shows up in code — judges check that the presented method is visible at code level. Regenerate the pinned requirements once dependencies have settled:
+  ```bash
+  uv export --no-hashes --no-dev -o requirements.txt
+  ```
+  `requirements.txt` is a named deliverable (24 Aug deck p32), not a nicety — judges are told to look for it.
+- **R4** — final eval numbers, run on **Bedrock** → hand to R1 for the benefits slide. Record the token counts from `report_usage()` while you are there; that is the cost-per-candidate figure for the Technical Quality slide.
 - **R1** — deck v2 with real screenshots, real eval numbers, and the baseline comparison on the benefits slide
 
 **Gate:** raw footage captured; repo runs clean from a fresh clone.
@@ -221,6 +267,8 @@ Descope in this order. Pre-agreeing it means you cut the right thing at 2am inst
 | Evidence reads as assumption | Every claim carries a named source and date; insight backed by published first-person accounts |
 | ~~Integration collapses at the end~~ | Retired — the pipe was connected before Day 1 and every stub swaps out behind a fixed interface |
 | One submission burned early | Nobody uploads until the Day 5 gate passes |
+| Bedrock access not granted when we need it | R1 enables it and makes one real call on Tue 1 Sep, four days before it matters |
+| Provider hardcoded, credits unusable | Day 1 rule: sub-agents call `_common.chat_model()`, never `ChatGroq` |
 | Deck rushed because R1 coded too long | Handover is fixed at Day 3 evening and does not move |
 
 ---
