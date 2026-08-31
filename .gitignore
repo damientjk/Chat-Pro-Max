@@ -1,0 +1,14 @@
+# ---- secrets. Never commit these. -------------------------------------
+.env
+*.pem
+credentials
+
+# ---- environments and caches ------------------------------------------
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# ---- build / submission artefacts -------------------------------------
+dist/
+*.zip
