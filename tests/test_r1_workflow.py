@@ -49,6 +49,9 @@ class R1WorkflowTests(unittest.TestCase):
         self.assertEqual(analysis.baseline.target_role_id, "operations")
         self.assertTrue(analysis.needs_replan)
         self.assertIn("screening", analysis.replan_reason or "")
+        self.assertIsNotNone(analysis.guidance)
+        assert analysis.guidance is not None
+        self.assertEqual(analysis.guidance.focus, "positioning")
 
     def test_handoff_does_not_request_a_replan_without_evidence(self) -> None:
         analysis = analyse_case(
@@ -59,3 +62,4 @@ class R1WorkflowTests(unittest.TestCase):
 
         self.assertFalse(analysis.needs_replan)
         self.assertIsNone(analysis.replan_reason)
+        self.assertIsNone(analysis.guidance)

@@ -52,6 +52,11 @@ def main() -> None:
     print(f"Baseline target: {analysis.baseline.target_role_title}")
     print(f"Baseline rationale: {analysis.baseline.rationale}")
     print(f"Re-plan signal: {analysis.needs_replan} - {analysis.replan_reason}")
+    if analysis.guidance:
+        print(
+            f"Recommended change: {analysis.guidance.focus} - "
+            f"{analysis.guidance.action}"
+        )
 
     benefits = calculate_benefits(
         [analysis.baseline],
