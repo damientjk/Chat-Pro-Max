@@ -9,7 +9,7 @@ intelligent, so each person can replace their own stub without waiting.
 
 from .contracts import CaseState
 from .eval.personas import DEMO
-from .graph import build
+from .graph import build, memory_checkpointer
 from .market import clock
 from .signals import outcomes
 from .ui.timeline import render
@@ -32,16 +32,27 @@ def initial_state() -> CaseState:
 
 
 def main() -> None:
-    app = build()
+    # Every step of the case is saved, so it can be inspected or resumed.
+    app = build(checkpointer=memory_checkpointer())
 
-    # The graph loops once per simulated week, so it needs far more than
-    # LangGraph's default recursion_limit of 25.
-    final = app.invoke(initial_state(), config={"recursion_limit": 200})
+    # A checkpointer needs a thread id — the identity of THIS case. One
+    # candidate, one thread; that is what you resume or rewind to.
+    config = {
+        # The graph loops once per simulated week, so it needs far more than
+        # LangGraph's default recursion_limit of 25.
+        "recursion_limit": 200,
+        "configurable": {"thread_id": f"case-{DEMO.name.lower().replace(' ', '-')}"},
+    }
+    final = app.invoke(initial_state(), config=config)
 
     print(f"\n  {DEMO.name}, {DEMO.age} — {DEMO.last_role}, {DEMO.last_industry}")
     print(f"  {clock.HORIZON_WEEKS} weeks\n")
     print(render(final["events"]))
-    print(f"\n  {outcomes.summarise(final)}\n")
+    print(f"\n  {outcomes.summarise(final)}")
+
+    # Proof the case is a record, not just a print. Every step is recoverable.
+    history = list(app.get_state_history(config))
+    print(f"  {len(history)} checkpoints saved — any week can be inspected or resumed\n")
 
 
 if __name__ == "__main__":
