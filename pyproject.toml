@@ -24,3 +24,13 @@ aws = [
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+# Lets tests do `from src.graph import ...` when run from the repo root.
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
