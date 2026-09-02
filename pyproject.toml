@@ -1,0 +1,36 @@
+[project]
+name = "reskilling-agent"
+version = "0.1.0"
+description = "An agent that plans a mid-career transition, re-plans when the market moves, and places."
+requires-python = ">=3.11"
+
+dependencies = [
+    # Groq free tier — what we build against. One env var swaps to Bedrock.
+    "groq>=0.37",
+    "langchain-groq>=1.1",
+    "langchain>=1.1.2",
+    "langgraph>=0.6",
+    "pydantic>=2.11",
+    # Lets a compiled graph draw itself as ASCII. Useful for the architecture slide.
+    "grandalf>=0.8",
+]
+
+[project.optional-dependencies]
+# Only if we move off Groq. Not needed for the demo.
+aws = [
+    "boto3>=1.42",
+    "langchain-aws>=1.4.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+# Lets tests do `from src.graph import ...` when run from the repo root.
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

@@ -1,24 +1,23 @@
-from dataclasses import dataclass
 import unittest
 
-from src.signals.outcomes import calculate_benefits
+from src.baseline.naive import BaselineRecommendation
+from src.signals.outcomes import AgentOutcome, calculate_benefits
 
 
-@dataclass
-class BaselineDecision:
-    target_role_id: str
-
-
-@dataclass
-class AgentOutcome:
-    dead_paths_caught: int
-    months_saved: int
-    training_spend_avoided: float
+def decision(title: str) -> BaselineRecommendation:
+    return BaselineRecommendation(
+        target_role_title=title,
+        open_gaps=2,
+        gaps_already_closed=0,
+        months_to_ready=9,
+        est_cost_sgd=4200,
+        rationale="stub",
+    )
 
 
 class BenefitMetricsTests(unittest.TestCase):
     def test_calculates_benefits_for_matching_personas(self) -> None:
-        baseline = [BaselineDecision("role-a"), BaselineDecision("role-b")]
+        baseline = [decision("Data Analyst"), decision("Logistics Systems Analyst")]
         agent = [
             AgentOutcome(1, 3, 1500.0),
             AgentOutcome(1, 2, 1000.0),
@@ -35,6 +34,6 @@ class BenefitMetricsTests(unittest.TestCase):
     def test_rejects_an_unfair_comparison(self) -> None:
         with self.assertRaisesRegex(ValueError, "same number of candidates"):
             calculate_benefits(
-                [BaselineDecision("role-a")],
+                [decision("Data Analyst")],
                 [AgentOutcome(1, 3, 1500.0), AgentOutcome(0, 0, 0.0)],
             )
