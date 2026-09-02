@@ -1,8 +1,30 @@
 """Shared types. Owner: R2.
 
-DRAFT — this is a starting point for the Day 1 morning meeting, not a decision.
-Argue with it, change it, then FREEZE it. Every other module imports from here,
-so an unannounced change on Day 3 costs the whole team an afternoon.
+FROZEN — agreed at the Day 1 meeting, Wednesday 2 September 2026.
+
+Every other module imports from here. That is what makes five people working in
+parallel possible, and it is why this file stops moving now.
+
+HOW TO CHANGE IT AFTER THE FREEZE
+---------------------------------
+  Add a field WITH A DEFAULT      -> your call. Say so in the group, then do it.
+  Rename a field                  -> stop. Bring it to the group.
+  Change a field's type           -> stop. Bring it to the group.
+  Change what a value MEANS       -> stop. Bring it to the group.
+
+The line is whether code that already exists keeps working. A new optional
+field breaks nobody — every reader ignores what it does not know about. Renaming
+`months_to_ready` breaks every reader at once, at whatever moment they next pull,
+and the people who wrote those readers are mid-task on something else.
+
+"Frozen" does not mean untouchable. It means changes that break other people are
+a conversation, not a commit. A rule nobody can follow gets ignored, and then
+everyone keeps a private copy of the types, which is the failure this file exists
+to prevent.
+
+Evidence it is ready: Day 1's agent-core work — training progress accumulating
+into the inventory, the re-plan carrying that forward, and checkpointing the
+whole case — landed without changing a single shape below.
 
 Nothing in this file calls a model or the network. It is data shapes only.
 

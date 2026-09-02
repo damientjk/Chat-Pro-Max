@@ -22,12 +22,50 @@ end to end with no API key. Replace the stubs one at a time; the wiring does
 not change when you do.
 """
 
+import inspect
+
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 
 from . import triggers
 from .agents import archaeologist, placement, planner
-from .contracts import CaseState, Event
+from .contracts import Capability, CaseState, Event, SkillInventory
 from .market import clock
+
+
+# --------------------------------------------------------------------------
+# Persistence
+# --------------------------------------------------------------------------
+
+
+def _contract_types() -> list[tuple[str, str]]:
+    """Every class defined in contracts.py, for the checkpoint allowlist.
+
+    Derived, never hand-listed. LangGraph will only rebuild a custom class out
+    of a checkpoint if it is named here, and the failure mode is SILENT: an
+    unlisted type comes back as a plain dict, so `state["target"].title` raises
+    AttributeError on resume and nowhere else. A list maintained by hand is a
+    list that gets forgotten the first time someone adds a shape.
+    """
+    from . import contracts
+
+    return [
+        (contracts.__name__, name)
+        for name, obj in vars(contracts).items()
+        if inspect.isclass(obj) and obj.__module__ == contracts.__name__
+    ]
+
+
+def memory_checkpointer() -> MemorySaver:
+    """In-process persistence that knows about our own types.
+
+    TODO(R2): swap for SqliteSaver (pip install langgraph-checkpoint-sqlite)
+    so a case survives a restart. Same interface, same serializer, one line.
+    """
+    return MemorySaver(
+        serde=JsonPlusSerializer(allowed_msgpack_modules=_contract_types())
+    )
 
 
 # --------------------------------------------------------------------------
@@ -68,9 +106,54 @@ def plan(state: CaseState) -> dict:
     }
 
 
+def _training_completed(state: CaseState, week: int) -> list[Capability]:
+    """Plan steps whose week has arrived, and which are not already capability.
+
+    ASSUMPTION worth stating out loud: a step scheduled for week N is treated as
+    done in week N. The candidate is assumed to follow the plan. A real system
+    asks them to confirm, and this is where that confirmation would land.
+    """
+    plan = state.get("plan")
+    inventory = state.get("inventory")
+    if not plan or not inventory:
+        return []
+
+    have = {name.lower() for name in inventory.names()}
+    return [
+        Capability(
+            skill=step.closes_gap,
+            evidence=f"completed in week {step.week}: {step.description}",
+        )
+        for step in plan.steps
+        if step.week <= week and step.closes_gap.lower() not in have
+    ]
+
+
 def advance_week(state: CaseState) -> dict:
+    """One week passes. The market moves, and training that was due gets done.
+
+    This is where the case ACCUMULATES rather than just ticking. Completed
+    training is written back into the inventory as capability with the week it
+    was earned — so from here on, every other node sees a person who can do
+    more than they could last week. That is what makes a later pivot a pivot
+    and not a restart.
+    """
     week = state["week"] + 1
-    return {"week": week, "market": clock.snapshot(week)}
+    update: dict = {"week": week, "market": clock.snapshot(week)}
+
+    learned = _training_completed(state, week)
+    if learned:
+        current = state["inventory"]
+        update["inventory"] = SkillInventory(
+            capabilities=current.capabilities + learned
+        )
+        skills = ", ".join(c.skill for c in learned)
+        update["events"] = [
+            Event(week=week, kind="progress", summary=f"training done: {skills}",
+                  because="the plan step scheduled for this week is complete, so "
+                          "it counts as capability from now on"),
+        ]
+    return update
 
 
 def replan(state: CaseState) -> dict:
@@ -87,7 +170,18 @@ def replan(state: CaseState) -> dict:
     # TODO(R3): ask the planner for the next-best target given what they have
     # already learned — some of the training carries over, and saying so is
     # what makes this feel like a plan rather than a restart.
-    fresh = planner.target(state["inventory"], market, week)
+    inventory = state["inventory"]
+    fresh = planner.target(inventory, market, week)
+
+    # What the abandoned target needed, and they have now. The planner already
+    # excludes these from the new plan because they are capability — this only
+    # NAMES them, so the timeline can show the pivot keeping the work rather
+    # than the candidate having to take it on trust.
+    have = {name.lower() for name in inventory.names()}
+    carried = [s for s in old.missing_skills if s.lower() in have]
+    because = fresh.rationale
+    if carried:
+        because += f" — and keeps the {', '.join(carried)} work already done"
 
     return {
         "target": fresh,
@@ -97,7 +191,7 @@ def replan(state: CaseState) -> dict:
                   summary=f"{old.title} postings fell to {postings}",
                   because="below the floor we set for a viable target"),
             Event(week=week, kind="replan", summary=f"switched to {fresh.title}",
-                  because=fresh.rationale),
+                  because=because),
         ],
     }
 
@@ -148,7 +242,15 @@ def apply_step(state: CaseState) -> dict:
 # --------------------------------------------------------------------------
 
 
-def build():
+def build(checkpointer=None):
+    """Compile the graph. Pass a checkpointer to make the case resumable.
+
+    With one, LangGraph saves the whole state after every step, keyed by a
+    thread id. That buys three things: the run can be resumed after a crash,
+    any past week can be inspected or rewound to, and a human approval step can
+    pause the graph and continue later — which is how `apply` becomes
+    human-gated on Day 2 without restructuring anything.
+    """
     g = StateGraph(CaseState)
 
     for name, fn in [
@@ -184,4 +286,4 @@ def build():
     for node in ("replan", "reposition", "apply"):
         g.add_edge(node, "advance_week")
 
-    return g.compile()
+    return g.compile(checkpointer=checkpointer)
