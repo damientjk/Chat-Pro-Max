@@ -1,25 +1,41 @@
-"""Render the event log as a timeline. Owner: R5.
-
-Terminal version below so the demo works from day one. TODO(R5): the visual
-version. If an adaptation is not visible on screen with its reason, the judges
-did not see it happen.
-"""
-
 from ..contracts import Event
 
+
 MARK = {
-    "drift": "!!",
-    "replan": "->",
-    "reposition": "->",
-    "offer": "**",
+    "intake": "INTAKE",
+    "target": "TARGET",
+    "plan": "PLAN",
+    "drift": "DRIFT",
+    "replan": "REPLAN",
+    "reposition": "REPOSITION",
+    "apply": "APPLICATION",
+    "offer": "OFFER",
 }
+
+ADAPTATION_EVENTS = {"drift", "replan", "reposition"}
 
 
 def render(events: list[Event]) -> str:
-    lines = []
-    for e in events:
-        mark = MARK.get(e.kind, "  ")
-        lines.append(f"  wk {e.week:>2}  {mark}  {e.summary}")
-        if e.because:
-            lines.append(f"            because {e.because}")
+    """Render the candidate's journey as a readable timeline."""
+
+    if not events:
+        return "No timeline events recorded."
+
+    lines = [
+        "SIX-MONTH ADAPTATION TIMELINE",
+        "-----------------------------",
+    ]
+
+    for event in sorted(events, key=lambda item: item.week):
+        mark = MARK.get(event.kind, event.kind.upper())
+
+        lines.append(
+            f"Week {event.week:>2} | {mark:<11} | {event.summary}"
+        )
+
+        if event.because:
+            lines.append(f"        Reason: {event.because}")
+        elif event.kind in ADAPTATION_EVENTS:
+            lines.append("        Reason: not recorded")
+
     return "\n".join(lines)
