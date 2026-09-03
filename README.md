@@ -18,8 +18,9 @@ python3 -m scripts.r1_demo
 2. `src/signals/rejection.py` - repeated-rejection re-plan signal.
 3. `src/signals/outcomes.py` - baseline-versus-agent benefit metrics.
 4. `src/signals/actions.py` - rejection-stage-specific re-plan guidance.
-5. `src/r1_workflow.py` - typed handoff of R1 evidence to R2.
-6. `evidence.md` - source log for claims in the deck.
+5. `src/signals/events.py` - JSON-safe Day 2 event for R2's re-plan edge.
+6. `src/r1_workflow.py` - typed handoff of R1 evidence to R2.
+7. `evidence.md` - source log for claims in the deck.
 
 When R2 publishes `src/contracts.py`, replace the temporary demo classes with
 the shared `SkillInventory`, `TargetRole`, and `ApplicationOutcome` types. Do

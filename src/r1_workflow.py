@@ -19,6 +19,7 @@ from src.signals.rejection import (
     detect_rejection_pattern,
 )
 from src.signals.actions import ReplanGuidance, recommend_replan_action
+from src.signals.events import ReplanEvent, build_replan_event
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class R1CaseAnalysis:
     baseline: BaselineRecommendation
     rejection_pattern: RejectionPattern | None
     guidance: ReplanGuidance | None
+    replan_event: ReplanEvent | None
 
     @property
     def needs_replan(self) -> bool:
@@ -51,10 +53,12 @@ def analyse_case(
     application_outcomes: Iterable[HasOutcomeDetails],
 ) -> R1CaseAnalysis:
     """Produce R1's baseline and rejection evidence for one candidate."""
+    pattern = detect_rejection_pattern(application_outcomes)
+    guidance = recommend_replan_action(pattern)
+
     return R1CaseAnalysis(
         baseline=recommend_once(skills, target_roles),
-        rejection_pattern=(
-            pattern := detect_rejection_pattern(application_outcomes)
-        ),
-        guidance=recommend_replan_action(pattern),
+        rejection_pattern=pattern,
+        guidance=guidance,
+        replan_event=build_replan_event(pattern, guidance),
     )
