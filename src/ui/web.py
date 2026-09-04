@@ -379,10 +379,20 @@ const $ = id => document.getElementById(id);
 function drawChart(upTo, horizon) {
   // Rebuilt from scratch each render so scrubbing backwards shows the chart as
   // it was, not as it ended. Thirty-odd points — the cost is irrelevant.
+  const currentTarget = frames[upTo]?.target;
   const series = [];
-  for (let i = 0; i <= upTo; i++) {
-    const f = frames[i];
-    if (f && f.postings != null) series.push([f.week, f.postings]);
+
+  if (currentTarget) {
+    for (let i = 0; i <= upTo; i++) {
+      const f = frames[i];
+      const value = f && f.market
+        ? f.market[currentTarget]
+        : null;
+
+      if (value != null) {
+        series.push([f.week, value]);
+      }
+    }
   }
   const svg = $("chart");
   if (!series.length) { svg.innerHTML = ""; return; }
