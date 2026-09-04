@@ -11,20 +11,28 @@ and places — treating every rejection as evidence that updates the plan.
 
 ```bash
 uv sync
+uv run pytest          # no key needed
 uv run python -m src.run_demo
-uv run python -m unittest discover -s tests -v
 ```
 
-**No API key needed yet.** Every sub-agent is a stub and every routing decision
-is ordinary Python, so the whole six-month simulation runs offline. That is
-deliberate: the pipe is connected before anything is intelligent, so each person
-replaces their own stub without waiting on anyone else.
-
-When you start making real model calls:
+**The demo needs a Groq key.** Day 2 replaced the sub-agent stubs with real
+model calls, so the scaffold no longer runs end to end without one:
 
 ```bash
 cp .env.example .env      # then paste your Groq key
 ```
+
+Get one at [console.groq.com](https://console.groq.com) — free, no card. `.env`
+lives at the repo root, is gitignored, and is read automatically.
+
+**The test suite still runs keyless, and always should.** `tests/conftest.py`
+swaps the five model-calling agents for deterministic doubles, so the graph is
+tested offline, in milliseconds, without spending tokens or failing because a
+model phrased something differently. `tests/test_agent_doubles.py` fails if a
+double drifts from the real signature it stands in for.
+
+Use `pytest`, not `unittest discover` — the latter silently collects only the
+`unittest`-style tests and skips the graph suite entirely.
 
 ## Providers — one environment variable
 

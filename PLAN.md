@@ -15,7 +15,7 @@ Confirmed against the 24 Aug deck (Session 3, pp. 29–31). Each criterion is sc
 
 ## Where we are
 
-The repo is scaffolded and **already runs end to end** — 26 simulated weeks through a real LangGraph state machine, both adaptation events firing, with no API key needed. That was Day 1's original gate, so the schedule below starts a step ahead of where it would otherwise.
+The repo is scaffolded and **already runs end to end** — 26 simulated weeks through a real LangGraph state machine, with both adaptation events firing. That was Day 1's original gate, so the schedule below starts a step ahead of where it would otherwise. It cleared that gate with no API key needed; since Day 2 replaced the sub-agent stubs with real model calls, a Groq key is now required to run it.
 
 ```bash
 brew install uv

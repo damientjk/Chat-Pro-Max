@@ -145,7 +145,7 @@ That's why the project already runs end to end today, even though the intelligen
 ## Where it stands right now
 
 - The full six-month cycle **runs today**, start to finish, with both adaptation moments firing.
-- It runs on any of the five laptops with no account, no key, and no internet, because every thinking part is still a placeholder returning a fixed answer.
+- Running it now needs a free Groq account and an internet connection, because the thinking parts are real as of Day 2. It ran on any of the five laptops with no account at all while they were still placeholders.
 - Over the build week, each person replaces their own placeholder with the real thing. The structure around it doesn't change when they do.
 
 The deadline is **Monday 7 September**, with one submission allowed — no second attempt, so nothing gets uploaded until it is genuinely finished. Semi-finals follow on 9–11 September and the final is on 18 September. The build window is Wednesday to Sunday, and [`PLAN.md`](PLAN.md) has the day-by-day schedule, including which features get cut first if time runs short. Deciding that in advance, calmly, is much better than deciding it at 2am on the Saturday.
