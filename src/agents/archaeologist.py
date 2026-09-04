@@ -11,7 +11,7 @@ malformed answer before it can reach the plan.
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from .._common import chat_model
+from .._common import structured
 from ..contracts import CandidateProfile, SkillInventory
 
 SYSTEM = """You are a skills archaeologist for a career-transition service.
@@ -31,7 +31,7 @@ Rules:
 
 
 def extract(candidate: CandidateProfile) -> SkillInventory:
-    llm = chat_model().with_structured_output(SkillInventory)
+    llm = structured(SkillInventory)
     return llm.invoke(
         [
             SystemMessage(content=SYSTEM),
