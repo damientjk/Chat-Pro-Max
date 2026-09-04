@@ -1,54 +1,62 @@
-"""A small R1-only demo until R2's shared contracts are available."""
+"""Print R1's baseline decision, rejection signal and benefit numbers.
 
-from dataclasses import dataclass
+Runs on the shared contracts, offline, with no model call — so the numbers on
+the benefits slide can be reproduced from a single command.
+"""
 
-from src.signals.outcomes import calculate_benefits
+from src.contracts import ApplicationOutcome, Capability, SkillInventory, Stage, TargetRole
 from src.r1_workflow import analyse_case
+from src.signals.outcomes import AgentOutcome, calculate_benefits
 
+INVENTORY = SkillInventory(
+    capabilities=[
+        Capability(skill="Excel", evidence="built the ops team's variance workbook"),
+        Capability(skill="Customer service", evidence="ran carrier disputes"),
+        Capability(skill="Scheduling", evidence="inbound scheduling for a 3PL"),
+    ]
+)
 
-@dataclass
-class Skills:
-    skills: list[str]
+SHORTLIST = [
+    TargetRole(
+        title="Data Analyst",
+        rationale="strongest long-term ceiling, but the widest gap today",
+        missing_skills=["SQL", "Python"],
+        months_to_ready=9,
+        est_cost_sgd=4200,
+        reachable=True,
+        confidence=0.55,
+    ),
+    TargetRole(
+        title="Operations Coordinator",
+        rationale="the scheduling and dispute work transfers almost intact",
+        missing_skills=["Scheduling"],
+        months_to_ready=3,
+        est_cost_sgd=1200,
+        reachable=True,
+        confidence=0.81,
+    ),
+]
 
-
-@dataclass
-class Role:
-    id: str
-    title: str
-    required_skills: list[str]
-
-
-@dataclass
-class ApplicationOutcome:
-    status: str
-    stage: str
-
-
-@dataclass
-class AgentOutcome:
-    dead_paths_caught: int
-    months_saved: int
-    training_spend_avoided: float
+# Three straight screening rejections: the positioning is wrong, not the target.
+OUTCOMES = [
+    ApplicationOutcome(
+        week=18, role_title="Operations Coordinator", stage_reached=Stage.SCREENING, rejected=True
+    ),
+    ApplicationOutcome(
+        week=18, role_title="Operations Coordinator", stage_reached=Stage.SCREENING, rejected=True
+    ),
+    ApplicationOutcome(
+        week=19, role_title="Operations Coordinator", stage_reached=Stage.SCREENING, rejected=True
+    ),
+    ApplicationOutcome(
+        week=19, role_title="Operations Coordinator", stage_reached=Stage.RECRUITER, rejected=False
+    ),
+]
 
 
 def main() -> None:
-    analysis = analyse_case(
-        Skills(["Excel", "Customer service", "Scheduling"]),
-        [
-            Role("data", "Data Analyst", ["SQL", "Python", "Excel"]),
-            Role(
-                "operations",
-                "Operations Coordinator",
-                ["Excel", "Customer service", "Scheduling"],
-            ),
-        ],
-        [
-            ApplicationOutcome("rejected", "screening"),
-            ApplicationOutcome("rejected", "screening"),
-            ApplicationOutcome("rejected", "screening"),
-            ApplicationOutcome("advanced", "screening"),
-        ],
-    )
+    analysis = analyse_case(INVENTORY, SHORTLIST, OUTCOMES)
+
     print(f"Baseline target: {analysis.baseline.target_role_title}")
     print(f"Baseline rationale: {analysis.baseline.rationale}")
     print(f"Re-plan signal: {analysis.needs_replan} - {analysis.replan_reason}")

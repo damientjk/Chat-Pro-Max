@@ -1,20 +1,58 @@
-"""Detect repeated application rejections that justify a re-plan."""
+"""Rejection-pattern detection. Owner: R1.
+
+Rejection is evidence, not noise. The PATTERN says what to fix:
+
+  all dying at SCREENING   -> the positioning is wrong  -> reposition
+  reaching TECHNICAL, then losing -> the gap analysis missed something -> re-plan
+  no responses at all      -> the target is wrong       -> back to targeting
+
+No model call. Pure Python over the outcome list, so it is unit-testable and
+drives a graph edge deterministically.
+
+TWO READERS, TWO SHAPES
+-----------------------
+`diagnose` answers the graph's question — one word, or None — because
+triggers.route needs an edge name and nothing else.
+
+`detect_rejection_pattern` answers the deck's question: it keeps the counts and
+the sentence that explains them, so a claim on a slide can be traced back to
+the applications that produced it. Same threshold, same input type; it just
+does not throw the arithmetic away.
+"""
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Iterable
+
+from ..contracts import ApplicationOutcome, Stage
+
+MIN_SIGNAL = 3  # do not conclude anything from one rejection
+
+# A stage has to dominate, not merely lead. Three rejections out of forty is
+# noise; three out of four is a pattern.
+MIN_RATE = 0.60
 
 
-class HasOutcomeDetails(Protocol):
-    status: str
-    stage: str
+def diagnose(applications: list[ApplicationOutcome]) -> str | None:
+    """Return 'reposition' | 'replan_gap' | 'retarget' | None."""
+    recent = [a for a in applications if a.rejected]
+    if len(recent) < MIN_SIGNAL:
+        return None
+
+    stages = Counter(a.stage_reached for a in recent)
+    # TODO(R1): tune these thresholds against the eval personas.
+    if stages[Stage.SCREENING] >= MIN_SIGNAL:
+        return "reposition"
+    if stages[Stage.TECHNICAL] >= MIN_SIGNAL:
+        return "replan_gap"
+    return None
 
 
 @dataclass(frozen=True)
 class RejectionPattern:
     """A concentrated rejection signal at one stage of the hiring process."""
 
-    stage: str
+    stage: Stage
     rejection_count: int
     total_outcomes: int
     rejection_rate: float
@@ -23,9 +61,9 @@ class RejectionPattern:
 
 
 def detect_rejection_pattern(
-    outcomes: Iterable[HasOutcomeDetails],
-    minimum_rejections: int = 3,
-    minimum_rate: float = 0.60,
+    outcomes: Iterable[ApplicationOutcome],
+    minimum_rejections: int = MIN_SIGNAL,
+    minimum_rate: float = MIN_RATE,
 ) -> RejectionPattern | None:
     """Return the strongest rejection pattern, if applications have failed.
 
@@ -34,15 +72,11 @@ def detect_rejection_pattern(
     outcomes. This avoids changing a career plan after one isolated rejection.
     """
     all_outcomes = list(outcomes)
-    rejected = [
-        outcome
-        for outcome in all_outcomes
-        if outcome.status.strip().lower() == "rejected"
-    ]
+    rejected = [outcome for outcome in all_outcomes if outcome.rejected]
     if not rejected:
         return None
 
-    stages = Counter(outcome.stage.strip().lower() for outcome in rejected)
+    stages = Counter(outcome.stage_reached for outcome in rejected)
     stage, rejection_count = stages.most_common(1)[0]
     rejection_rate = rejection_count / len(all_outcomes)
     should_replan = (
@@ -63,6 +97,6 @@ def detect_rejection_pattern(
         should_replan=should_replan,
         reason=(
             f"{rejection_count} of {len(all_outcomes)} applications were rejected "
-            f"at {stage}. {action}"
+            f"at {stage.value}. {action}"
         ),
     )

@@ -7,19 +7,11 @@ R2's LangGraph supervisor remains the single owner of state transitions.
 from dataclasses import dataclass
 from typing import Iterable
 
-from src.baseline.naive import (
-    BaselineRecommendation,
-    HasRoleDetails,
-    HasSkills,
-    recommend_once,
-)
-from src.signals.rejection import (
-    HasOutcomeDetails,
-    RejectionPattern,
-    detect_rejection_pattern,
-)
-from src.signals.actions import ReplanGuidance, recommend_replan_action
-from src.signals.events import ReplanEvent, build_replan_event
+from .baseline.naive import BaselineRecommendation, recommend_once
+from .contracts import ApplicationOutcome, SkillInventory, TargetRole
+from .signals.actions import ReplanGuidance, recommend_replan_action
+from .signals.events import ReplanEvent, build_replan_event
+from .signals.rejection import RejectionPattern, detect_rejection_pattern
 
 
 @dataclass(frozen=True)
@@ -48,16 +40,16 @@ class R1CaseAnalysis:
 
 
 def analyse_case(
-    skills: HasSkills,
-    target_roles: Iterable[HasRoleDetails],
-    application_outcomes: Iterable[HasOutcomeDetails],
+    inventory: SkillInventory,
+    target_roles: Iterable[TargetRole],
+    application_outcomes: Iterable[ApplicationOutcome],
 ) -> R1CaseAnalysis:
     """Produce R1's baseline and rejection evidence for one candidate."""
     pattern = detect_rejection_pattern(application_outcomes)
     guidance = recommend_replan_action(pattern)
 
     return R1CaseAnalysis(
-        baseline=recommend_once(skills, target_roles),
+        baseline=recommend_once(inventory, target_roles),
         rejection_pattern=pattern,
         guidance=guidance,
         replan_event=build_replan_event(pattern, guidance),

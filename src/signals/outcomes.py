@@ -1,14 +1,38 @@
-"""Compute the baseline-versus-agent benefit numbers for the presentation."""
+"""Benefit metrics. Owner: R1.
+
+The number the benefits slide lives on. Computed, not asserted.
+
+TODO(R1): months saved, wasted training spend avoided, dead paths caught.
+Run agent vs baseline across all six personas and record the comparison.
+"""
 
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Iterable
+
+from ..baseline.naive import BaselineRecommendation
+from ..contracts import CaseState
 
 
-class HasBaselineDecision(Protocol):
-    target_role_id: str
+def summarise(state: CaseState) -> dict:
+    return {
+        "weeks_elapsed": state.get("week", 0),
+        "applications": len(state.get("applications", [])),
+        "adaptations": len(
+            [e for e in state.get("events", []) if e.kind in ("replan", "reposition")]
+        ),
+        "outcome": state.get("outcome", ""),
+    }
 
 
-class HasAgentOutcome(Protocol):
+@dataclass(frozen=True)
+class AgentOutcome:
+    """What one adaptive run saved, relative to the baseline's single guess.
+
+    Defined here rather than in contracts.py because it is scoring output, not
+    graph state — no node reads or writes it. R4's harness fills these in from
+    a completed CaseState.
+    """
+
     dead_paths_caught: int
     months_saved: int
     training_spend_avoided: float
@@ -24,8 +48,8 @@ class BenefitMetrics:
 
 
 def calculate_benefits(
-    baseline_decisions: Iterable[HasBaselineDecision],
-    agent_outcomes: Iterable[HasAgentOutcome],
+    baseline_decisions: Iterable[BaselineRecommendation],
+    agent_outcomes: Iterable[AgentOutcome],
 ) -> BenefitMetrics:
     """Compare the baseline and adaptive agent over exactly the same people.
 
@@ -44,7 +68,7 @@ def calculate_benefits(
     return BenefitMetrics(
         candidates=len(adaptive),
         baseline_dead_paths=sum(
-            1 for decision in baseline if decision.target_role_id
+            1 for decision in baseline if decision.target_role_title
         ),
         agent_dead_paths_caught=sum(
             outcome.dead_paths_caught for outcome in adaptive
