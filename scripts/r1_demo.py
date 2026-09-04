@@ -65,6 +65,8 @@ def main() -> None:
             f"Recommended change: {analysis.guidance.focus} - "
             f"{analysis.guidance.action}"
         )
+    if analysis.replan_event:
+        print(f"Day 2 event payload: {analysis.replan_event.to_state_payload()}")
 
     benefits = calculate_benefits(
         [analysis.baseline],

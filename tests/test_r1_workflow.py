@@ -63,6 +63,9 @@ class R1WorkflowTests(unittest.TestCase):
         self.assertIsNotNone(analysis.guidance)
         assert analysis.guidance is not None
         self.assertEqual(analysis.guidance.focus, "positioning")
+        self.assertIsNotNone(analysis.replan_event)
+        assert analysis.replan_event is not None
+        self.assertEqual(analysis.replan_event.event_type, "rejection_pattern")
 
     def test_handoff_does_not_request_a_replan_without_evidence(self) -> None:
         analysis = analyse_case(
@@ -74,3 +77,4 @@ class R1WorkflowTests(unittest.TestCase):
         self.assertFalse(analysis.needs_replan)
         self.assertIsNone(analysis.replan_reason)
         self.assertIsNone(analysis.guidance)
+        self.assertIsNone(analysis.replan_event)

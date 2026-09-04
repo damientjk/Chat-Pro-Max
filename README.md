@@ -126,8 +126,9 @@ Built in this order, each one usable on its own:
 2. `src/signals/rejection.py` — repeated-rejection re-plan signal.
 3. `src/signals/actions.py` — rejection-stage-specific re-plan guidance.
 4. `src/signals/outcomes.py` — baseline-versus-agent benefit metrics.
-5. `src/r1_workflow.py` — typed handoff of R1 evidence to R2.
-6. `evidence.md` — source log for claims in the deck.
+5. `src/signals/events.py` — JSON-safe re-plan event for R2's second edge.
+6. `src/r1_workflow.py` — typed handoff of R1 evidence to R2.
+7. `evidence.md` — source log for claims in the deck.
 
 These now read the shared types from `src/contracts.py` — `SkillInventory`,
 `TargetRole`, `ApplicationOutcome` and `Stage` — rather than the temporary
