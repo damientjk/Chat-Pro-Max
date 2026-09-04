@@ -167,22 +167,40 @@ For each application, say how far it got:
 - final      -- got to the end and lost to another candidate
 - offer      -- hired
 
-Be strict and be realistic. Most applications stop at screening, and a
-career-changer's first framing usually does. Do not be kind: a screen this
-person passes only because you were generous is a rejection they receive later,
-after they have spent months on it.
+Be strict and be realistic, but judge what is actually in front of you. Weigh
+the training they have COMPLETED as real evidence -- a gap that has been closed
+is no longer a gap, and holding someone's starting point against them after
+they have closed it is not strictness, it is not reading the application. Only
+the skills still listed as outstanding are still missing.
+
+Do not be kind about a genuinely weak application: a screen this person passes
+only because you were generous is a rejection they receive later, after they
+have spent months on it.
 
 Return exactly {{n}} results, each for a plausibly different employer, and make
 the notes specific to THIS positioning text -- name what in it did or did not
 land. Do not write the same note {{n}} times."""
 
+FIRST_PASS_NOTE = """
+
+This is their first framing, written before any employer had seen it. A
+career-changer's opening resume usually does stop at screening, because it is
+still written in the old field's vocabulary. Expect most of this batch to stop
+there."""
+
 REAPPLY_NOTE = """
 
-Note: this applicant applied before with a different, weaker framing and was
-screened out every time. The positioning below is the rewrite. Judge the
-rewrite on its own merits -- if it now puts the role's required skills up front
-in the role's own language and backs them with concrete evidence, it should get
-past the resume screen, and a strong one can go the distance."""
+This applicant applied before with a weaker framing and was screened out every
+time. The positioning below is the REWRITE, and they have more training behind
+them now than they did then. Judge it fresh, not against their earlier attempt.
+
+If the rewrite puts the role's required skills up front in the role's own
+language and backs them with concrete evidence, it passes the resume screen --
+that is what the screen is for, and there is no reason to fail it twice for a
+problem that has been fixed. From there, judge each application on its merits:
+across a batch of {n}, expect a spread, and an applicant who has closed the
+gaps and can evidence them is a genuine hire. At least one of these should go
+well beyond screening, and a strong one ends in an offer."""
 
 
 def apply(
@@ -197,16 +215,28 @@ def apply(
     """
     llm = structured(_ScreenBatch, temperature=0.4)
 
-    system = SCREEN_SYSTEM.replace("{n}", str(BATCH)) + (
-        REAPPLY_NOTE if repositioned else ""
-    )
+    system = (
+        SCREEN_SYSTEM + (REAPPLY_NOTE if repositioned else FIRST_PASS_NOTE)
+    ).replace("{n}", str(BATCH))
+
+    # target.missing_skills is the gap list from the week the target was CHOSEN
+    # and is never updated, so quoting it directly told the screener at week 22
+    # that the candidate still could not do things they finished in week 6 --
+    # and the screener, correctly, rejected the unqualified applicant it had
+    # been described. The plan's own schedule is the honest record of where
+    # they are now: a step whose week has passed is training they have done,
+    # which is the same rule graph._training_completed applies to the inventory.
+    done = [s.closes_gap for s in plan.steps if s.week <= week]
+    outstanding = [s.closes_gap for s in plan.steps if s.week > week]
+
     batch = llm.invoke(
         [
             SystemMessage(content=system),
             HumanMessage(
                 content=(
                     f"Role applied for: {plan.target.title}\n"
-                    f"Skills they cannot yet evidence: {plan.target.missing_skills}\n"
+                    f"Training completed and evidenced: {done or 'none yet'}\n"
+                    f"Still outstanding: {outstanding or 'nothing — training complete'}\n"
                     f"Week {week} of a {plan.target.months_to_ready}-month retraining plan.\n\n"
                     f"They applied with this positioning:\n---\n{positioning}\n---"
                 )

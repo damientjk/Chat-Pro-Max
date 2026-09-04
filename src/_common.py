@@ -188,6 +188,13 @@ def chat_model(temperature: float = 0.0, **kwargs):
             **kwargs,
         )
 
+    # Restored: this guard used to live here and was moved into structured()
+    # below, where it sits after a return and can never run. Without it a typo
+    # in LLM_PROVIDER returns None, and the failure surfaces as
+    # `AttributeError: 'NoneType' has no attribute 'with_structured_output'`
+    # somewhere else entirely.
+    sys.exit(f"Unknown PROVIDER {PROVIDER!r}. Use 'groq' or 'bedrock'.")
+
 
 def structured(schema, temperature: float = 0.0, attempts: int = 3, **kwargs):
     """A chat model bound to `schema`, that retries a malformed tool call.
@@ -208,6 +215,14 @@ def structured(schema, temperature: float = 0.0, attempts: int = 3, **kwargs):
     therefore costs three attempts before it surfaces, with the same error at
     the end. That is a development-time mistake you see immediately; a run that
     dies at week 19 of a recorded demo is not.
+
+    RateLimitError is retried too, and it is a DIFFERENT branch of the SDK's
+    exception tree — it descends from APIStatusError, not BadRequestError, so
+    listing BadRequestError alone never caught it. The free tier allows 8000
+    tokens per minute and a full case spends roughly twice that, so a 429
+    partway through is the normal case rather than the unlucky one. The window
+    slides, so the wait is short and backing off is all that is needed; a run
+    died at week 20 for want of a 1.6-second pause.
     """
     runnable = chat_model(temperature=temperature, **kwargs).with_structured_output(schema)
 
@@ -216,14 +231,22 @@ def structured(schema, temperature: float = 0.0, attempts: int = 3, **kwargs):
         # failure. Left unwrapped rather than guessing at its error taxonomy.
         return runnable
 
-    from groq import BadRequestError
+    from groq import APIConnectionError, BadRequestError, InternalServerError, RateLimitError
 
     return runnable.with_retry(
-        retry_if_exception_type=(BadRequestError,),
-        stop_after_attempt=attempts,
+        retry_if_exception_type=(
+            BadRequestError,      # 400 tool_use_failed — malformed structured output
+            RateLimitError,       # 429 — free-tier TPM, clears on its own
+            InternalServerError,  # 5xx — transient on the provider's side
+            APIConnectionError,   # the connection dropped before a reply
+        ),
+        # A rate limit needs a longer, growing pause than a reparse does; the
+        # jittered backoff covers both, and attempts is raised to match because
+        # the first two retries of a 429 can still land inside the same window.
+        wait_exponential_jitter=True,
+        exponential_jitter_params={"initial": 2, "max": 30},
+        stop_after_attempt=max(attempts, 5),
     )
-
-    sys.exit(f"Unknown PROVIDER {PROVIDER!r}. Use 'groq' or 'bedrock'.")
 
 
 # --------------------------------------------------------------------------
