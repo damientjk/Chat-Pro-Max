@@ -25,6 +25,24 @@ cp .env.example .env      # then paste your Groq key
 Get one at [console.groq.com](https://console.groq.com) — free, no card. `.env`
 lives at the repo root, is gitignored, and is read automatically.
 
+## Watch it run
+
+```bash
+uv run python -m src.ui.web            # live web timeline at localhost:8000
+uv run python -m src.ui.web --replay   # replay the last run — no key, no network
+uv run python -m scripts.preview_ui    # terminal timeline, stub data, no key
+```
+
+The web view streams the case over Server-Sent Events using only the Python
+standard library — no server framework, nothing added to `requirements.txt`. It
+shows the postings chart against the viability floor (crossing it is what fires
+the re-plan), a readiness bar that resets on each pivot, and the timeline with
+every adaptation's reason.
+
+**Every live run records itself to `.last_run.json`**, and `--replay` re-streams
+it with no key and no network. Get one good live run, then film the replay —
+a take can't be spoilt by a rate limit.
+
 **The test suite still runs keyless, and always should.** `tests/conftest.py`
 swaps the five model-calling agents for deterministic doubles, so the graph is
 tested offline, in milliseconds, without spending tokens or failing because a

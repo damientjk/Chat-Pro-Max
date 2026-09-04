@@ -12,7 +12,7 @@ from .eval.personas import DEMO
 from .graph import build, memory_checkpointer
 from .market import clock
 from .signals import outcomes
-from .ui.timeline import render
+from .ui.timeline import render, render_readiness
 
 
 def initial_state() -> CaseState:
@@ -54,26 +54,40 @@ def main() -> None:
     # names the node that just ran. Week alone is not enough — weeks 0 makes
     # three model calls before the counter moves, so a stall there would look
     # like a stall on nothing.
+    # For each step the "updates" chunk (which names the node) arrives BEFORE
+    # the "values" chunk carrying that node's result, so the name is held and
+    # the line is drawn on the values that follow. Print on updates instead and
+    # every line pairs a node with the state from before it ran.
     final = None
-    week = 0
+    node = "start"
     for mode, chunk in app.stream(
         initial_state(), config=config, stream_mode=["values", "updates"]
     ):
-        if mode == "values":
-            final = chunk
-            week = chunk.get("week", week)
-        else:
-            for node in chunk:
-                print(
-                    f"\r  week {week:>2}/{clock.HORIZON_WEEKS}  {node:<14}",
-                    end="",
-                    flush=True,
-                )
-    print("\r" + " " * 48 + "\r", end="")
+        if mode == "updates":
+            for name in chunk:
+                node = name
+            continue
+
+        final = chunk
+        # R5's bar, first line only — the second line is the months figure,
+        # which belongs in the footer rather than in a one-line ticker.
+        # Watching this fill, reset on the week-10 pivot, and fill again is
+        # the clearest signal on screen that the agent re-planned.
+        bar = render_readiness(
+            chunk.get("inventory"), chunk.get("target")
+        ).splitlines()[0]
+        print(
+            f"\r  week {chunk.get('week', 0):>2}/{clock.HORIZON_WEEKS}  {node:<14}  {bar}",
+            end="",
+            flush=True,
+        )
+    print("\r" + " " * 78 + "\r", end="")
 
     print(f"\n  {DEMO.name}, {DEMO.age} — {DEMO.last_role}, {DEMO.last_industry}")
     print(f"  {clock.HORIZON_WEEKS} weeks\n")
     print(render(final["events"]))
+    print()
+    print(render_readiness(final.get("inventory"), final.get("target")))
     print(f"\n  {outcomes.summarise(final)}")
 
     # Proof the case is a record, not just a print. Every step is recoverable.

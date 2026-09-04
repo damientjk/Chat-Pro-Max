@@ -30,8 +30,10 @@ from langgraph.graph import END, START, StateGraph
 
 from . import triggers
 from .agents import archaeologist, placement, planner
-from .contracts import Capability, CaseState, Event, SkillInventory
+from .contracts import Capability, CaseState, Event, Plan, SkillInventory, TargetRole
 from .market import clock
+from .signals.actions import recommend_replan_action
+from .signals.rejection import detect_rejection_pattern
 
 
 # --------------------------------------------------------------------------
@@ -156,6 +158,57 @@ def advance_week(state: CaseState) -> dict:
     return update
 
 
+def _rebuild_plan(state: CaseState, week: int) -> tuple[TargetRole, Plan, list[str]]:
+    """A fresh target and plan against what they can do NOW.
+
+    The planner sees the current inventory and the current market, so the gap it
+    returns already excludes training that has been completed. `carried` names
+    what transferred, so the timeline can show a pivot KEEPING the work rather
+    than the candidate having to take that on trust.
+
+    Shared by all three rebuild nodes below. They differ in why they fired and
+    what they say about it, not in how a plan gets rebuilt.
+    """
+    inventory = state["inventory"]
+    old = state["target"]
+    fresh = planner.target(inventory, state["market"], week)
+
+    have = {name.lower() for name in inventory.names()}
+    carried = [s for s in old.missing_skills if s.lower() in have]
+
+    supersedes = old.title if fresh.title != old.title else None
+    return fresh, planner.plan(fresh, week, supersedes=supersedes), carried
+
+
+def _framing_reset(old: TargetRole, fresh: TargetRole) -> dict:
+    """Drop the positioning when the target changes.
+
+    apply_step reuses `positioning` once it is set. Without this, a pivot keeps
+    describing the candidate for the role it just abandoned — the applications
+    would go out under the old framing and the pivot would look like it failed.
+    An empty string is falsy, so apply_step regenerates rather than skipping.
+    """
+    if fresh.title == old.title:
+        return {}
+    return {"positioning": "", "repositioned": False}
+
+
+def _guidance(state: CaseState) -> str | None:
+    """R1's specific corrective action for the rejection pattern in play.
+
+    signals/actions.py already turns a pattern into ONE named fix, with the
+    counts behind it. Restating that here in R2's own words would drift from
+    R1's the moment they tune a threshold, so the graph quotes it instead of
+    paraphrasing it. Returns None when the evidence is too thin to name a fix.
+    """
+    since = state.get("signal_from_week", 0)
+    recent = [a for a in state.get("applications", []) if a.week >= since]
+    guidance = recommend_replan_action(detect_rejection_pattern(recent))
+    if guidance is None:
+        return None
+    return f"{guidance.rationale} {guidance.action}"
+
+
 def replan(state: CaseState) -> dict:
     """Adaptation event 1. The target stopped hiring; pick another and say why."""
     week = state["week"]
@@ -170,27 +223,91 @@ def replan(state: CaseState) -> dict:
     # TODO(R3): ask the planner for the next-best target given what they have
     # already learned — some of the training carries over, and saying so is
     # what makes this feel like a plan rather than a restart.
-    inventory = state["inventory"]
-    fresh = planner.target(inventory, market, week)
+    fresh, new_plan, carried = _rebuild_plan(state, week)
 
-    # What the abandoned target needed, and they have now. The planner already
-    # excludes these from the new plan because they are capability — this only
-    # NAMES them, so the timeline can show the pivot keeping the work rather
-    # than the candidate having to take it on trust.
-    have = {name.lower() for name in inventory.names()}
-    carried = [s for s in old.missing_skills if s.lower() in have]
     because = fresh.rationale
     if carried:
         because += f" — and keeps the {', '.join(carried)} work already done"
 
     return {
         "target": fresh,
-        "plan": planner.plan(fresh, week, supersedes=old.title),
+        "plan": new_plan,
+        # Rejections collected against the abandoned target say nothing about
+        # this one. The applications reducer only appends, so move the pointer.
+        "signal_from_week": week,
+        **_framing_reset(old, fresh),
         "events": [
             Event(week=week, kind="drift",
                   summary=f"{old.title} postings fell to {postings}",
                   because="below the floor we set for a viable target"),
             Event(week=week, kind="replan", summary=f"switched to {fresh.title}",
+                  because=because),
+        ],
+    }
+
+
+def replan_gap(state: CaseState) -> dict:
+    """Adaptation event 2a. They keep reaching the technical round and losing.
+
+    Screening is being passed, so the positioning is doing its job — it is the
+    GAP ANALYSIS that missed something the interview tests. The fix is a better
+    plan, not better words, which is why this is a different edge from
+    reposition rather than a second flavour of it.
+    """
+    week = state["week"]
+    old = state["target"]
+    fresh, new_plan, carried = _rebuild_plan(state, week)
+
+    because = _guidance(state) or (
+        "applications keep reaching the technical round and stopping there, "
+        "so the plan is missing a skill the interview tests"
+    )
+    if carried:
+        because += f" — the {', '.join(carried)} work already done still counts"
+
+    return {
+        "target": fresh,
+        "plan": new_plan,
+        "signal_from_week": week,  # this pattern has been answered
+        **_framing_reset(old, fresh),
+        "events": [
+            Event(week=week, kind="replan",
+                  summary=f"deepened the plan for {fresh.title}",
+                  because=because),
+        ],
+    }
+
+
+def retarget(state: CaseState) -> dict:
+    """Adaptation event 2b. The rewrite died at screening too.
+
+    One rewrite is a fair test of the framing. A second identical rewrite is
+    not a second attempt, it is the same attempt — so when a rewritten profile
+    still cannot pass a screen, the honest read is that the target is wrong,
+    not the words. Positioning is dropped so the new target gets its own.
+    """
+    week = state["week"]
+    old = state["target"]
+    fresh, new_plan, carried = _rebuild_plan(state, week)
+
+    because = _guidance(state) or (
+        "the rewritten profile still did not pass screening, so the target is "
+        "the problem rather than how it is described"
+    )
+    if carried:
+        because += f" — and keeps the {', '.join(carried)} work already done"
+
+    return {
+        "target": fresh,
+        "plan": new_plan,
+        "signal_from_week": week,
+        # Always fresh framing here, even if the planner returns the same title:
+        # the previous rewrite is exactly what just failed.
+        "positioning": "",
+        "repositioned": False,
+        "events": [
+            Event(week=week, kind="replan",
+                  summary=f"abandoned {old.title} for {fresh.title}",
                   because=because),
         ],
     }
@@ -259,6 +376,8 @@ def build(checkpointer=None):
         ("plan", plan),
         ("advance_week", advance_week),
         ("replan", replan),
+        ("replan_gap", replan_gap),
+        ("retarget", retarget),
         ("reposition", reposition),
         ("apply", apply_step),
     ]:
@@ -275,6 +394,8 @@ def build(checkpointer=None):
         triggers.route,
         {
             "drift": "replan",
+            "replan_gap": "replan_gap",
+            "retarget": "retarget",
             "reposition": "reposition",
             "apply": "apply",
             "continue": "advance_week",
@@ -283,7 +404,7 @@ def build(checkpointer=None):
     )
 
     # Everything loops back to the clock.
-    for node in ("replan", "reposition", "apply"):
+    for node in ("replan", "replan_gap", "retarget", "reposition", "apply"):
         g.add_edge(node, "advance_week")
 
     return g.compile(checkpointer=checkpointer)
