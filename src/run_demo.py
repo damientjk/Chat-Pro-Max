@@ -43,7 +43,33 @@ def main() -> None:
         "recursion_limit": 200,
         "configurable": {"thread_id": f"case-{DEMO.name.lower().replace(' ', '-')}"},
     }
-    final = app.invoke(initial_state(), config=config)
+    # Streamed rather than invoked so the run reports progress. Nine sequential
+    # model calls take a minute or more on Groq's free tier, and a terminal that
+    # prints nothing for that long is indistinguishable from a hang — which
+    # matters, because a malformed tool call really can take a run down.
+    # stream_mode="values" yields the whole state after each step, so the last
+    # one is exactly what invoke() would have returned.
+    # Two stream modes at once: "values" yields the whole state after each step,
+    # so the last one is exactly what invoke() would have returned; "updates"
+    # names the node that just ran. Week alone is not enough — weeks 0 makes
+    # three model calls before the counter moves, so a stall there would look
+    # like a stall on nothing.
+    final = None
+    week = 0
+    for mode, chunk in app.stream(
+        initial_state(), config=config, stream_mode=["values", "updates"]
+    ):
+        if mode == "values":
+            final = chunk
+            week = chunk.get("week", week)
+        else:
+            for node in chunk:
+                print(
+                    f"\r  week {week:>2}/{clock.HORIZON_WEEKS}  {node:<14}",
+                    end="",
+                    flush=True,
+                )
+    print("\r" + " " * 48 + "\r", end="")
 
     print(f"\n  {DEMO.name}, {DEMO.age} — {DEMO.last_role}, {DEMO.last_industry}")
     print(f"  {clock.HORIZON_WEEKS} weeks\n")

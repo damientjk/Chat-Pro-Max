@@ -23,7 +23,7 @@ hackathon; see NEVER AUTO-SUBMIT below.
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from .._common import chat_model
+from .._common import structured
 from ..contracts import ApplicationOutcome, Plan, SkillInventory, Stage
 from ..signals.rejection import MIN_SIGNAL
 
@@ -97,7 +97,7 @@ def translate(
     screening -- so the prompt is TOLD that, rather than producing the same
     text again and hoping for a different result.
     """
-    llm = chat_model(temperature=0.3).with_structured_output(_Positioning)
+    llm = structured(_Positioning, temperature=0.3)
 
     capabilities = "\n".join(
         f"  - {c.skill} (evidence: {c.evidence})" for c in inventory.capabilities
@@ -195,7 +195,7 @@ def apply(
     wired to real postings, submission goes behind an explicit human gate --
     that is a product commitment, not a TODO.
     """
-    llm = chat_model(temperature=0.4).with_structured_output(_ScreenBatch)
+    llm = structured(_ScreenBatch, temperature=0.4)
 
     system = SCREEN_SYSTEM.replace("{n}", str(BATCH)) + (
         REAPPLY_NOTE if repositioned else ""

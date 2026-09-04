@@ -13,7 +13,7 @@ not a viable target however good the fit -- that judgement has to see the market
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from .._common import chat_model
+from .._common import structured
 from ..contracts import MarketSnapshot, Plan, PlanStep, SkillInventory, TargetRole
 
 # Below this many postings in a given week, a role is not worth training toward.
@@ -49,7 +49,7 @@ Fill every field:
 def target(
     inventory: SkillInventory, market: MarketSnapshot, week: int
 ) -> TargetRole:
-    llm = chat_model().with_structured_output(TargetRole)
+    llm = structured(TargetRole)
     postings = "\n".join(
         f"  {role}: {n} postings this week"
         for role, n in sorted(market.postings_by_role.items(), key=lambda kv: -kv[1])
@@ -95,7 +95,7 @@ kind is one of: course, project, cert."""
 
 
 def plan(target_role: TargetRole, week: int, supersedes: str | None = None) -> Plan:
-    llm = chat_model().with_structured_output(_PlanDraft)
+    llm = structured(_PlanDraft)
     draft = llm.invoke(
         [
             SystemMessage(content=PLAN_SYSTEM),

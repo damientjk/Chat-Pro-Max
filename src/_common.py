@@ -24,11 +24,11 @@ from pathlib import Path
 
 
 def _load_dotenv() -> None:
-    """Read lab/.env into the environment, if it exists.
+    """Read the repo root's .env into the environment, if it exists.
 
     `export GROQ_API_KEY=...` lasts until you close the terminal, which is how
-    people end up keyless halfway through a lab. A .env file next to this one
-    survives new tabs, editor restarts and Windows.
+    people end up keyless halfway through a session. A .env file at the repo
+    root survives new tabs, editor restarts and Windows.
 
     A real env var always wins — this only fills in what is missing. Deliberately
     hand-rolled rather than pulling in python-dotenv: one less thing to install
@@ -59,6 +59,14 @@ PROVIDER = os.environ.get("LLM_PROVIDER", "groq")
 
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 
+# Seconds before a Groq request is abandoned. ChatGroq defaults to None, which
+# means no timeout at all: a stalled connection blocks the caller forever, with
+# no CPU used and nothing printed. A demo run that hangs indefinitely is worse
+# than one that fails, because nobody knows which is happening. The Bedrock path
+# below has always set its own timeouts; this is the Groq equivalent.
+# The longest successful call observed on this project was 24s.
+GROQ_TIMEOUT = float(os.environ.get("GROQ_TIMEOUT", "60"))
+
 # Kept as MODEL_ID because labs 01-08 (Session 2 and take-home) import that name.
 MODEL_ID = os.environ.get(
     "BEDROCK_MODEL", "global.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -86,8 +94,8 @@ def require_groq_key() -> None:
             "  2. API Keys -> Create API Key -> copy it NOW (shown once)\n"
             "  3. either:\n"
             "       export GROQ_API_KEY=gsk_...        (this terminal only)\n"
-            "     or, better:\n"
-            "       echo 'GROQ_API_KEY=gsk_...' > lab/.env\n\n"
+            "     or, better, at the repo root:\n"
+            "       cp .env.example .env    then put the key in it\n\n"
             "  The .env file survives new terminal tabs. It is gitignored —\n"
             "  do not commit a key, and do not paste one in the chat."
         )
@@ -161,6 +169,13 @@ def chat_model(temperature: float = 0.0, **kwargs):
         require_groq_key()
         from langchain_groq import ChatGroq
 
+        # setdefault, so an explicit value from a caller still wins.
+        kwargs.setdefault("request_timeout", GROQ_TIMEOUT)
+        # The SDK's own retries sit UNDER the timeout, so they multiply it:
+        # at the default max_retries=2 a stalled call costs 3 x GROQ_TIMEOUT
+        # before it raises. A 219s call was measured that way. One retry is
+        # enough to ride out a dropped connection without a four-minute stall.
+        kwargs.setdefault("max_retries", 1)
         return ChatGroq(model=GROQ_MODEL, temperature=temperature, **kwargs)
 
     if PROVIDER == "bedrock":
@@ -172,6 +187,41 @@ def chat_model(temperature: float = 0.0, **kwargs):
             temperature=temperature,
             **kwargs,
         )
+
+
+def structured(schema, temperature: float = 0.0, attempts: int = 3, **kwargs):
+    """A chat model bound to `schema`, that retries a malformed tool call.
+
+    Small models sometimes emit invalid JSON for a structured-output call —
+    Groq rejects it with 400 `tool_use_failed` and the whole graph run dies at
+    whichever node was unlucky. It is stochastic and length-dependent: with a
+    ~800-character positioning to reason about, placement's screening batch
+    failed about 2 runs in 5, which is more often than not across a full case.
+    A second attempt nearly always parses.
+
+    Use this rather than `chat_model(...).with_structured_output(...)` anywhere
+    a failure would take a whole run down with it.
+
+    The retry is deliberately on the broad BadRequestError rather than only the
+    tool_use_failed code, because with_retry matches exception TYPES and cannot
+    take a predicate. A genuinely bad request — wrong model id, bad schema —
+    therefore costs three attempts before it surfaces, with the same error at
+    the end. That is a development-time mistake you see immediately; a run that
+    dies at week 19 of a recorded demo is not.
+    """
+    runnable = chat_model(temperature=temperature, **kwargs).with_structured_output(schema)
+
+    if PROVIDER != "groq":
+        # Bedrock is the path we run when it matters, and it has not shown this
+        # failure. Left unwrapped rather than guessing at its error taxonomy.
+        return runnable
+
+    from groq import BadRequestError
+
+    return runnable.with_retry(
+        retry_if_exception_type=(BadRequestError,),
+        stop_after_attempt=attempts,
+    )
 
     sys.exit(f"Unknown PROVIDER {PROVIDER!r}. Use 'groq' or 'bedrock'.")
 
