@@ -15,7 +15,24 @@ Confirmed against the 24 Aug deck (Session 3, pp. 29–31). Each criterion is sc
 
 ## Where we are
 
-The repo is scaffolded and **already runs end to end** — 26 simulated weeks through a real LangGraph state machine, with both adaptation events firing. That was Day 1's original gate, so the schedule below starts a step ahead of where it would otherwise. It cleared that gate with no API key needed; since Day 2 replaced the sub-agent stubs with real model calls, a Groq key is now required to run it.
+**Revised Fri 4 Sep, from a verified run rather than from the test suite.**
+
+The repo runs end to end — 26 simulated weeks through a real LangGraph state machine, checkpointed, with progress carried through pivots. It cleared Day 1's gate with no API key; since Day 2 replaced the sub-agent stubs with real model calls, a Groq key is now required.
+
+**Day 2's gate was recorded as passed. It was not.** The suite went green against test doubles, so nobody saw that only one of the two adaptation events fires on real model output:
+
+| Capability | Owner | State |
+|---|---|---|
+| Rejection → reposition | R1 R2 R3 | Works on real output |
+| **Drift → replan** | **R4 R3** | **Never fires** — only one role title ever drops below the floor, and the real planner picks a different one |
+| **Candidate gets placed** | **R3** | **Never** — the screener rejects even after the rewrite; real runs end `outcome: ''` |
+| **Eval numbers** | **R4** | **Not started** — harness is a 7-line stub, one persona of six |
+| Graph, state, checkpointing | R2 | Done |
+| Timeline UI (terminal + web) | R5 | Done |
+
+There is no buffer dividend. Day 3 is doing Day 3's job and Day 2's.
+
+**R4 owns both never-cut items that are not built.** Everything else on the board is done or small.
 
 ```bash
 brew install uv
@@ -180,15 +197,21 @@ Lock these and do not reopen them:
 
 ## Day 3 — Fri 4 Sep — Close the loop ⚠ MAKE-OR-BREAK
 
-**Goal: both adaptation events fire end to end on real model output.** This is the day the project either has a spine or doesn't.
+**Goal: both adaptation events fire end to end on real model output.** One of the two does. This is the day the project either has a spine or doesn't.
 
-If Day 2's gate passed, today is buffer — spend it on eval numbers, hardening and the deck rather than new features. That slack is the dividend from having the scaffolding built before Day 1.
+Every decision point below has a named fallback, so a slip becomes a decision rather than a discovery at 2am.
 
-- **R2 + R3 (pair all day)** — the monitor/adapt phase. Market drift triggers a re-plan with a stated reason. Then the placement agent: translation, matching, and **rejection patterns feeding back into the plan**.
-- **R4** — eval runs against all 6 personas; first real numbers
-- **R1 (AM)** — `signals/outcomes.py`: compute the benefit metrics — months saved, wasted training spend avoided, dead paths caught. Run baseline vs. agent across all 6 personas and record the comparison.
-- **R1 (from evening)** — **handover point.** Code is done; hand `signals/` to R2 and switch to narrative for the rest of the hackathon. Deck v1 skeleton, all 10 slides.
-- **R5** — full timeline visualisation; both adaptation events visible on screen
+| Time | Who | What |
+|---|---|---|
+| 09:00 | all | Stand-up, 15 min. Read the status table above out loud. Agree Day 2's gate did not pass and today absorbs it. No debate about how it happened. |
+| 09:15 | **R4** | **Make more than one role drift.** Highest-value hour on the board — removes the demo's dependency on the planner choosing one title. |
+| 09:15 | **R3** | **Screener can say yes after a rewrite.** `REAPPLY_NOTE` already says a strong rewrite should pass; it needs to bind, or the reposition event never pays off and no run ends placed. |
+| 09:15 | R2 | Merge the adaptation-routing branch — all three rejection diagnoses now reach an edge. Gives a second real adaptation story while drift is broken. |
+| **13:00** | R2 R3 R4 | **Decision — drift.** If it is not firing on a real run, R2 and R3 take the market change over and R4 moves entirely to eval. Nobody holds two never-cut items past midday. |
+| 13:00 | R4 | Eval harness produces one number, agent vs. baseline, on the personas that exist. Two with a real number beats six planned. |
+| **16:00** | R1 R4 | **Decision — eval scope.** Whatever number exists at 16:00 is the number on the slide. Stop adding personas. |
+| 18:00 | **R1** | **Handover point.** Code done; hand `signals/` to R2 and switch to narrative. Deck v1 skeleton, all 10 slides. Fixed — does not move. |
+| **21:00** | all | **Gate call.** Run it end to end for each other on real output. Honest read only. |
 
 **Gate — non-negotiable:** the demo timeline shows (a) month-3 market drift → agent kills path A, pivots to B, explains why, and (b) a rejection pattern → agent rewrites positioning.
 
@@ -200,8 +223,11 @@ If Day 2's gate passed, today is buffer — spend it on eval numbers, hardening 
 
 **Feature freeze at 12:00.** No new features after noon, no exceptions. Anything not working by then is cut, not fixed.
 
+- **09:00** — **if last night's gate failed, cut now.** Use the list below without debate; it was agreed in advance so this conversation is short.
 - **AM, everyone** — bug bash on the demo path only. Ignore bugs off the happy path.
 - **12:00** — freeze.
+- **13:00** — switch to Bedrock and **do one full dry run before filming anything**. Measured on Groq's free tier: 8000 tokens/minute, calls stalling past 60s, one run at 366s and another at 20s. A rate limit mid-take is an expensive way to learn that.
+- **R5 (PM)** — get one clean live run, then **film the replay** (`uv run python -m src.ui.web --replay`). It re-streams a recorded run with no key and no network, so a take cannot be spoiled by the provider.
 - **R5 + R1 (PM)** — record the video, running on **Bedrock** so a free-tier rate limit cannot spoil a take. Structure: hook 0:30 → problem 0:30 → solution 0:30 → **demo 2:00** → impact 0:45 → close 0:45. Shoot more takes than you think you need.
 - **R2 + R3** — README: how to run, what each file does, `.env` for secrets. In-line comments where the methodology shows up in code — judges check that the presented method is visible at code level. Regenerate the pinned requirements once dependencies have settled:
   ```bash
@@ -246,12 +272,13 @@ Anyone blocked for more than 90 minutes says so at once. Silent blockage is the 
 
 Descope in this order. Pre-agreeing it means you cut the right thing at 2am instead of the thing someone is attached to.
 
-1. Real course-catalogue integration → hardcode a plausible plan object
-2. Multiple candidate personas in the demo → one persona, told well
-3. Live job data → synthetic snapshot (do this from the start anyway)
-4. Interview-prep sub-agent → mention on the roadmap slide
-5. AgentCore deployment → run locally, show the architecture slide
-6. Polished UI → clean terminal output with a readable trace
+1. Six eval personas → however many have a real number by 16:00 on Day 3
+2. Generated market series with noise → keep the step function; a visible cliff beats no drift at all
+3. The gap-and-retarget routing added on Day 3 → revert to the single reposition edge if it destabilises
+4. Web timeline → the terminal renderer, which is complete and needs no server
+5. Multiple candidate personas in the demo → one persona, told well
+6. Interview-prep sub-agent → mention on the roadmap slide
+7. AgentCore deployment → run locally, show the architecture slide
 
 **Never cut:** the two adaptation events, the eval numbers, the video.
 
@@ -261,7 +288,10 @@ Descope in this order. Pre-agreeing it means you cut the right thing at 2am inst
 
 | Risk | Mitigation |
 |---|---|
-| Adaptation isn't visible in 5 min | Replay clock built Day 1; two dated events on screen |
+| **Green tests, broken demo** | **Live.** The suite runs against doubles and structurally cannot see the gate failing. Judge the gate by watching a real run, never by test output. |
+| **One person holds two never-cut items** | **Live.** The 13:00 decision point on Day 3 reassigns the market change if it has not landed. |
+| **Free-tier rate limits mid-take** | Groq allows 8000 tokens/minute and a full run needs roughly twice that. Bedrock from Sat 13:00, with a dry run before filming. Application cadence cut the per-run burn. |
+| Adaptation isn't visible in 5 min | Replay clock built Day 1; two dated events on screen, plus a readiness bar that resets on the pivot |
 | Video left to the last day | Filmed Day 4, edited Day 5 |
 | Only works on one laptop | Fresh-clone test Day 5 |
 | Evidence reads as assumption | Every claim carries a named source and date; insight backed by published first-person accounts |
