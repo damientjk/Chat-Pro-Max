@@ -123,10 +123,6 @@
 
   /* ---- why this role --------------------------------------------------- */
   .rationale { color: var(--ink); font-size: .9rem; }
-  .rule {
-    font-size: .8rem; color: var(--muted); margin: .9rem 0 .7rem;
-    padding-left: .7rem; border-left: 2px solid var(--line);
-  }
   .roles { display: flex; flex-direction: column; gap: .3rem; }
   .role { display: grid; grid-template-columns: 1fr 3.2rem; gap: .6rem; align-items: center; font-size: .82rem; }
   .role .name { display: flex; align-items: center; gap: .45rem; min-width: 0; }
@@ -155,10 +151,6 @@
     margin-right: .4rem;
   }
   .step.todo .desc, .step.todo .w { color: var(--muted); }
-  .supersedes {
-    font-size: .8rem; color: var(--reposition); margin-bottom: .7rem;
-    padding-left: .7rem; border-left: 2px solid var(--reposition);
-  }
 
   /* ---- chart ----------------------------------------------------------- */
   svg { width: 100%; height: 190px; display: block; }
@@ -268,10 +260,6 @@
       <div class="card" id="whycard">
         <h2>Why this role <span class="sub" id="whywhen"></span></h2>
         <div class="rationale" id="rationale">—</div>
-        <div class="rule">
-          The planner is told to narrow to roles reachable from the evidence it was
-          given, then, among those, to take the one with the most postings that week.
-        </div>
         <div class="roles" id="roles"></div>
       </div>
     </div>
@@ -290,7 +278,6 @@
 
       <div class="card" id="plancard">
         <h2>Training plan <span class="sub" id="plansub"></span></h2>
-        <div class="supersedes" id="supersedes" hidden></div>
         <div class="steps" id="steps"></div>
       </div>
     </div>
@@ -320,7 +307,7 @@ const MIN_GAP = 250, MAX_GAP = 3000;
 // the training that happens in those weeks went by too fast to read. Six months
 // is the span the whole product claim rests on, so each week has to be visible
 // as a week.
-const MIN_WEEK = CFG.minWeekMs ?? 2000;
+const MIN_WEEK = CFG.minWeekMs ?? 1000;
 
 let frames = [];
 let idx = -1;
@@ -484,7 +471,6 @@ function renderPlan(f) {
   const plan = f.plan;
   if (!plan || !plan.steps || !plan.steps.length) {
     $("plansub").textContent = "";
-    $("supersedes").hidden = true;
     // "plan" is absent for two different reasons and they need different
     // wording: before the planner has run there is genuinely no plan, but a
     // recording made before the plan was streamed has one and simply did not
@@ -499,13 +485,6 @@ function renderPlan(f) {
   const done = plan.steps.filter(s => s.week <= f.week).length;
   $("plansub").textContent =
     `· ${plan.steps.length} steps · ${done} of ${plan.steps.length} done`;
-
-  if (plan.supersedes) {
-    $("supersedes").textContent = `Replaces the abandoned ${plan.supersedes} path — training already finished still counts.`;
-    $("supersedes").hidden = false;
-  } else {
-    $("supersedes").hidden = true;
-  }
 
   $("steps").innerHTML = plan.steps.map(s => {
     const complete = s.week <= f.week;

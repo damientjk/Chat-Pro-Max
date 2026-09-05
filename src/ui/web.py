@@ -72,9 +72,9 @@ PAGE_FILE = Path(__file__).resolve().parent / "page.html"
 PORT = 8000
 
 # Minimum on-screen time for one simulated week. 26 weeks puts a floor of
-# about 52 seconds under the whole run, before any model call is added --
+# about 26 seconds under the whole run, before any model call is added --
 # long enough to read, short enough to film. --pace scales it.
-MIN_WEEK_MS = 2000
+MIN_WEEK_MS = 1000
 
 
 # --------------------------------------------------------------------------

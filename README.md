@@ -51,11 +51,11 @@ It shows four things at once:
 There is no speed control, because the pace comes from the run. Every frame
 records when it landed, so playback reproduces the real gaps — a long model
 call is a real pause with the agent that caused it named on screen. Each
-simulated week also holds the screen for at least two seconds: the weeks with
-no model call in them are pure Python and land microseconds apart, so without
-that floor the case leaps from week 0 to week 10 and the training in between
-is never legible. A full run plays in about a minute and a half. `--pace 0.5`
-scales the whole thing for filming.
+simulated week also holds the screen for at least a second: the weeks with no
+model call in them are pure Python and land microseconds apart, so without that
+floor the case leaps from week 0 to week 10 and the training in between is
+never legible. A full run plays in about a minute. `--pace 0.5` scales the
+whole thing for filming.
 
 **Every live run records itself to `.last_run.json`**, and `--replay` re-streams
 it with no key and no network. Get one good live run, then film the replay —
