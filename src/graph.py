@@ -417,8 +417,21 @@ def build(checkpointer=None):
         },
     )
 
-    # Everything loops back to the clock.
-    for node in ("replan", "replan_gap", "retarget", "reposition", "apply"):
+    # A reposition goes STRAIGHT to apply, in the same week, rather than back
+    # to the clock. A rewrite exists to be tested, and waiting out the normal
+    # application cadence to find out whether it worked is wrong on its own
+    # terms — but it was also fatal here. The rejection pattern needs three
+    # rejections at one stage to fire, which took until week 25 in a real run;
+    # the next scheduled batch would have been week 27, and route() ends the
+    # case at 26. The second adaptation event was firing and then never being
+    # given a chance to pay off, so no run could ever end placed.
+    #
+    # Only reposition. replan_gap and retarget produce a NEW plan with new
+    # gaps, and applying before any of that training has happened would be
+    # applying for a role the candidate cannot yet do.
+    g.add_edge("reposition", "apply")
+
+    for node in ("replan", "replan_gap", "retarget", "apply"):
         g.add_edge(node, "advance_week")
 
     return g.compile(checkpointer=checkpointer)
