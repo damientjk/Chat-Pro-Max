@@ -9,6 +9,10 @@
 --offline records to .offline_run.json, never over the live .last_run.json:
 stub output must never be the thing that gets filmed by mistake.
 
+A long model call shows as a pause of the same length, not as a label: the
+frame is simply held back until the call would have returned. Which agent it
+was, and what it decided, is the Agent activity panel's job.
+
 The page has play/pause, step and a scrubber. Space toggles play, arrow keys
 step. There is deliberately NO speed control: the pace comes from the run
 itself. Every frame carries the time it landed, so a replay reproduces the real
@@ -147,13 +151,11 @@ def _frame(state: CaseState, node: str, *, t: float, calls: list[dict]) -> dict:
 def run_case(emit, offline: bool = False) -> None:
     """Drive the real graph, calling emit(message) as the case progresses.
 
-    Two kinds of message go out. `frame` is the case state after a node; the
-    page redraws from it. `activity` is a model call starting or finishing, and
-    exists so a LIVE viewer sees which agent is busy the moment it becomes
-    busy, rather than staring at a page that has not changed for twelve
-    seconds. A replay ignores activity messages and uses each frame's recorded
-    `calls` instead, so the indicator stays in step with whatever the viewer
-    has scrubbed to.
+    One kind of message goes out: `frame`, the case state after a node. Model
+    calls reach the page on the frame of the node that made them, so they are
+    read back at the point in the run they belong to rather than whenever they
+    happened to finish. There was a second, live channel feeding a header
+    banner; the banner is gone and so is the channel.
     """
     from ..graph import build, memory_checkpointer
     from ..run_demo import initial_state
@@ -175,10 +177,8 @@ def run_case(emit, offline: bool = False) -> None:
     seen = {"week": 0}
 
     def on_activity(record: dict) -> None:
-        record = {**record, "week": seen["week"]}
-        emit({"kind": "activity", **record})
         if record.get("phase") == "end":
-            pending.append(record)
+            pending.append({**record, "week": seen["week"]})
 
     activity.instrument(on_activity)
 

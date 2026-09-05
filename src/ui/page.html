@@ -22,10 +22,10 @@
   * { box-sizing: border-box; }
   /* The browser's own [hidden] rule is a USER-AGENT style, and any author rule
      that sets display beats it outright — no specificity contest, author simply
-     wins. .working below sets display:flex, so `el.hidden = true` on the agent
-     banner did nothing at all: the element stayed on screen after the run had
-     finished, while the JavaScript that hid it ran correctly every time. State
-     it here as an author rule so hiding actually hides, for every element. */
+     wins. An element whose class sets display therefore goes on rendering
+     after `el.hidden = true`, with the JavaScript that hid it running
+     correctly every time — a silent failure that cost several rounds to find.
+     State it here as an author rule so hiding actually hides. */
   [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
@@ -44,23 +44,6 @@
   }
   .status { font-size: .82rem; color: var(--muted); font-family: var(--mono); }
   .top .status { margin-left: auto; }
-
-  /* The working banner. This is the answer to "nothing is moving": during a
-     model call the page says which agent is busy and for how long. */
-  .working {
-    display: flex; align-items: center; gap: .55rem;
-    padding: .3rem .7rem .3rem .55rem; border-radius: 999px;
-    background: #1b2430; border: 1px solid #2b3646;
-    font-size: .82rem; color: var(--ink);
-  }
-  .working .dot {
-    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
-    animation: pulse 1.1s ease-in-out infinite;
-  }
-  .working .task { color: var(--muted); }
-  .working .el { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--accent); }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-  @media (prefers-reduced-motion: reduce) { .working .dot { animation: none; } }
 
   /* ---- controls -------------------------------------------------------- */
   .controls {
@@ -219,11 +202,6 @@
   <div class="top">
     <h1>Reskilling-to-Placement Agent</h1>
     <span class="wk" id="wk">week 0</span>
-    <span class="working" id="working" hidden>
-      <i class="dot"></i><b id="wagent"></b>
-      <span class="task" id="wtask"></span>
-      <span class="el" id="welapsed"></span>
-    </span>
     <span class="status" id="status">connecting…</span>
   </div>
 
@@ -321,8 +299,6 @@ let playing = true;
 let timer = null;
 const LIVE = CFG.mode === "live";
 let tab = "timeline";
-let liveCall = null;      // the call currently running, in live mode
-let elapsedTimer = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c =>
@@ -566,44 +542,6 @@ function activityHtml(f) {
 
 
 // ---------------------------------------------------------------------------
-// The working indicator
-// ---------------------------------------------------------------------------
-
-function showWorking(agent, task, elapsedFrom, recordedSeconds) {
-  $("wagent").textContent = agent;
-  $("wtask").textContent = task;
-  $("working").hidden = false;
-  clearInterval(elapsedTimer);
-  elapsedTimer = null;
-
-  if (recordedSeconds != null) {
-    // Playing back a call that has already happened: show what it ACTUALLY
-    // took, as a fixed figure. It used to tick up real wall-clock time during
-    // the pause — but gapBefore caps that pause at a few seconds, so every
-    // call longer than the cap ended on exactly the same number and looked
-    // frozen there. Worse, that number was the length of the compressed
-    // pause, presented as though it were the model's thinking time: a
-    // twenty-eight second call read as "4.0s". A counter that cannot run for
-    // as long as the thing it is timing should not be a counter.
-    $("welapsed").textContent = recordedSeconds.toFixed(1) + "s";
-    return;
-  }
-
-  // Live, and the call is genuinely in flight: this is real elapsed time.
-  $("welapsed").textContent = "0.0s";
-  elapsedTimer = setInterval(() => {
-    $("welapsed").textContent = ((performance.now() - elapsedFrom) / 1000).toFixed(1) + "s";
-  }, 100);
-}
-
-function hideWorking() {
-  clearInterval(elapsedTimer);
-  elapsedTimer = null;
-  $("working").hidden = true;
-}
-
-
-// ---------------------------------------------------------------------------
 // Render one frame
 // ---------------------------------------------------------------------------
 
@@ -645,7 +583,6 @@ function show(i) {
     const ending = f.outcome === "placed" ? "placed" : `no offer in ${f.horizon} weeks`;
     $("status").textContent =
       `finished — ${adaptations} adaptation${adaptations === 1 ? "" : "s"}, ${ending}`;
-    hideWorking();
   }
   syncControls();
 }
@@ -737,40 +674,23 @@ function gapBefore(i) {
 function schedule() {
   clearTimeout(timer);
   timer = null;
-  if (!playing || idx >= frames.length - 1) {
-    // Nothing more to play. Hide the banner unless a live run has simply
-    // caught up with itself — there, the case is still being decided and the
-    // activity channel owns what the banner says.
-    const here = frames[idx];
-    if (!playing || !LIVE || (here && here.finished)) hideWorking();
-    return;
-  }
+  if (!playing || idx >= frames.length - 1) return;
 
-  const next = idx + 1;
-  const wait = gapBefore(next);
-
-  // A pause of any length is a model call finishing. Name the agent behind it,
-  // so the wait reads as work rather than as the page having stalled. Where a
-  // node made several calls they all land on one frame, and the longest is the
-  // one the pause is actually about — naming the first meant a 1.4s reformat
-  // fronting for the 11s screening batch behind it.
-  const calls = frames[next].calls || [];
-  const call = calls.reduce((a, b) => ((b.seconds || 0) > (a.seconds || 0) ? b : a), calls[0]);
-  if (call && wait > MIN_GAP + 100) showWorking(call.agent, call.task, null, call.seconds || 0);
-  else hideWorking();
-
+  // The pause itself is what shows a model call happening: gapBefore holds the
+  // frame back for as long as the call took, so a long call reads as a wait
+  // rather than as a step that never came. What the call WAS is the Agent
+  // activity tab's job.
   timer = setTimeout(() => {
     timer = null;
-    hideWorking();
-    show(next);
+    show(idx + 1);
     schedule();
-  }, wait);
+  }, gapBefore(idx + 1));
 }
 
 $("play").onclick = () => {
   if (!playing && idx >= frames.length - 1 && frames.length) show(0);
   playing = !playing;
-  if (!playing) { clearTimeout(timer); hideWorking(); }
+  if (!playing) clearTimeout(timer);
   else schedule();
   syncControls();
 };
@@ -811,37 +731,15 @@ document.addEventListener("keydown", e => {
 
 const es = new EventSource("/events");
 es.onopen = () => { $("status").textContent = CFG.mode === "live" ? "live" : "replaying"; };
-es.onerror = () => {
-  // Nothing is working if nothing is connected.
-  $("status").textContent = "disconnected";
-  hideWorking();
-};
+es.onerror = () => { $("status").textContent = "disconnected"; };
 
 es.onmessage = ev => {
   const msg = JSON.parse(ev.data);
 
-  if (msg.kind === "activity") {
-    // Live only. A replay drives the indicator from the recorded call on the
-    // next frame instead, so the pause and the label stay in step with
-    // whatever the viewer has scrubbed to.
-    if (!LIVE) return;
-
-    // An "end" is never gated. Whatever the display is doing, that call has
-    // returned, and a banner left standing for finished work is worse than no
-    // banner — it is what kept "Screener ... 4.0s" on screen after the run was
-    // over. Only the "start" is gated, on having caught up: while playback is
-    // still working through buffered weeks the frame on screen is not the one
-    // this call belongs to, and schedule() is already naming the right agent.
-    if (msg.phase === "end") {
-      liveCall = null;
-      hideWorking();
-      return;
-    }
-    if (idx < frames.length - 1) return;
-    liveCall = msg;
-    showWorking(msg.agent, msg.task, performance.now(), null);
-    return;
-  }
+  // Activity messages drove the header banner, which is gone. They are still
+  // recognised so that one can never be mistaken for a frame and pushed onto
+  // the timeline.
+  if (msg.kind !== "frame") return;
 
   frames.push(msg);
   if (idx < 0) show(0);
