@@ -663,8 +663,15 @@ function renderTicks() {
   // exactly on top of each other — four events showing as two marks, with the
   // count and the tooltip both misleading. The last event at an index wins,
   // which is the action taken rather than the trigger that prompted it.
+  //
+  // Only up to the frame being SHOWN, never the whole buffer. Frames arrive
+  // ahead of playback — a live run receives week 10 while the viewer is still
+  // watching week 8 — so marking every buffered adaptation put a tick on the
+  // bar for a pivot that had not happened yet, several weeks before the
+  // timeline said anything about it. The bar is a record of the case so far,
+  // not a preview of it.
   const at = new Map();
-  for (let i = 1; i < frames.length; i++) {
+  for (let i = 1; i <= idx && i < frames.length; i++) {
     const before = (frames[i - 1].events || []).length;
     for (const e of (frames[i].events || []).slice(before)) {
       if (ADAPT.has(e.kind)) at.set(i, e.kind);
