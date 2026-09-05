@@ -170,3 +170,29 @@ def test_an_adaptation_still_outranks_the_cadence():
     """A diagnosed pattern is acted on immediately, not at the next batch."""
     sent = [outcome(PLACEMENT_WEEK, Stage.SCREENING) for _ in range(3)]
     assert route(state(week=PLACEMENT_WEEK + 1, applications=sent)) == "reposition"
+
+
+# --------------------------------------------------------------------------
+# How a case ENDS — contracts.py names two ways, and both must be recorded
+# --------------------------------------------------------------------------
+
+
+def test_a_case_that_never_places_says_so(monkeypatch):
+    """An empty outcome cannot be told apart from a run still in progress.
+
+    contracts.py has always advertised "ran_out_of_runway"; before this it was
+    documentation for a value nothing ever set.
+    """
+    final = run_with(monkeypatch, Stage.SCREENING)
+
+    assert final["outcome"] == "ran_out_of_runway"
+
+
+def test_an_offer_is_not_overwritten_by_the_final_tick(monkeypatch):
+    """The horizon guard must not clobber a placement that already landed."""
+    final = build(checkpointer=memory_checkpointer()).invoke(
+        initial_state(),
+        config={"recursion_limit": 200, "configurable": {"thread_id": "placed"}},
+    )
+
+    assert final["outcome"] == "placed"

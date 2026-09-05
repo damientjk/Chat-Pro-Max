@@ -155,6 +155,20 @@ def advance_week(state: CaseState) -> dict:
                   because="the plan step scheduled for this week is complete, so "
                           "it counts as capability from now on"),
         ]
+
+    # The horizon is the end of the runway, and it is reached here — route()
+    # sees it a moment later and ends the case, but a router returns an edge
+    # name, not state, so this is the only place that can record WHY the case
+    # stopped. contracts.py has always advertised "ran_out_of_runway" as one of
+    # the two ways a case can end; until now nothing set it, so an unplaced
+    # candidate ended with an empty string and every reader had to guess
+    # whether that meant "not placed" or "still running".
+    #
+    # Guarded on `done` so a week-26 offer is not overwritten by the tick that
+    # follows it.
+    if week >= clock.HORIZON_WEEKS and not state.get("done"):
+        update["outcome"] = "ran_out_of_runway"
+
     return update
 
 
