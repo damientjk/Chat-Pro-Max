@@ -213,9 +213,6 @@
   .call .task { font-size: .84rem; color: var(--muted); margin-top: .2rem; }
   .call .dec { font-size: .88rem; margin-top: .15rem; }
   .call.failed .agent { background: #3a1a1a; color: #e08585; }
-  .deterministic { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--muted); }
-  .deterministic ul { margin: .5rem 0 0; padding-left: 1.1rem; }
-  .deterministic code { font-family: var(--mono); font-size: .95em; color: var(--faint); }
   .empty { color: var(--faint); font-size: .85rem; padding: .8rem .1rem; }
 </style>
 </head>
@@ -261,6 +258,13 @@
         </div>
       </div>
 
+      <div class="card">
+        <h2>Postings per week <span class="sub">for the roles we have targeted</span></h2>
+        <svg id="chart" viewBox="0 0 560 190" role="img"
+             aria-label="Weekly postings for each role the agent has targeted"></svg>
+        <div class="legend" id="legend"></div>
+      </div>
+
       <div class="card" id="whycard">
         <h2>Why this role <span class="sub" id="whywhen"></span></h2>
         <div class="rationale" id="rationale">—</div>
@@ -269,36 +273,26 @@
           given, then, among those, to take the one with the most postings that week.
         </div>
         <div class="roles" id="roles"></div>
-        <div class="note" id="whynote"></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card">
+        <h2>
+          <span id="feedtitle">Timeline</span>
+          <span class="tabs">
+            <button id="tab-timeline" class="on">Timeline</button>
+            <button id="tab-activity">Agent activity</button>
+          </span>
+        </h2>
+        <div class="feed" id="feed"></div>
       </div>
 
       <div class="card" id="plancard">
         <h2>Training plan <span class="sub" id="plansub"></span></h2>
         <div class="supersedes" id="supersedes" hidden></div>
         <div class="steps" id="steps"></div>
-        <div class="note">
-          A step counts as done once its week has arrived — the same rule the graph
-          uses to write finished training back into the skill inventory.
-        </div>
       </div>
-
-      <div class="card">
-        <h2>Postings per week <span class="sub">for the roles we have targeted</span></h2>
-        <svg id="chart" viewBox="0 0 560 190" role="img"
-             aria-label="Weekly postings for each role the agent has targeted"></svg>
-        <div class="legend" id="legend"></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>
-        <span id="feedtitle">Timeline</span>
-        <span class="tabs">
-          <button id="tab-timeline" class="on">Timeline</button>
-          <button id="tab-activity">Agent activity</button>
-        </span>
-      </h2>
-      <div class="feed" id="feed"></div>
     </div>
   </div>
 
@@ -444,7 +438,7 @@ function renderWhy(f) {
   const market = f.market || {};
   const floor = f.floor ?? CFG.floor;
   const roles = Object.entries(market).sort((a, b) => b[1] - a[1]);
-  if (!roles.length) { $("roles").innerHTML = ""; $("whynote").textContent = ""; return; }
+  if (!roles.length) { $("roles").innerHTML = ""; return; }
 
   const top = roles[0][1] || 1;
   $("roles").innerHTML = roles.map(([role, n]) => {
@@ -461,14 +455,6 @@ function renderWhy(f) {
         <div class="n">${n}</div>
       </div>`;
   }).join("");
-
-  // Deliberately "was looking at", not "rejected": we know the market the
-  // planner was given and the reason it stated, and nothing about which of
-  // these it weighed against which. Claiming otherwise would be inventing
-  // reasoning the model never reported.
-  $("whynote").textContent =
-    `What the planner was looking at in week ${f.week}. Roles under ${floor} postings `
-    + `are not viable targets that week, however good the fit.`;
 }
 
 function chosenWeek(f) {
@@ -563,21 +549,10 @@ function callsUpTo(i) {
 
 function activityHtml(f) {
   const calls = callsUpTo(idx);
-  const deterministic = `
-    <div class="deterministic">
-      Everything else is ordinary Python — no model call, and the same result on
-      every take:
-      <ul>
-        <li><code>src/triggers.py</code> — which adaptation to take, and when to apply</li>
-        <li><code>src/market/clock.py</code> — the weekly market, and whether the target has drifted</li>
-        <li><code>src/signals/rejection.py</code> — the shape of the rejections coming back</li>
-      </ul>
-    </div>`;
-
   if (!calls.length) {
     return '<div class="empty">No model calls recorded. This recording predates '
       + 'agent tracing — run <code>uv run python -m src.ui.web</code> once to '
-      + 'capture a new one.</div>' + deterministic;
+      + 'capture a new one.</div>';
   }
 
   const total = calls.reduce((a, c) => a + (c.seconds || 0), 0);
@@ -597,7 +572,7 @@ function activityHtml(f) {
         <div class="task">${esc(c.task)}</div>
         <div class="dec">→ ${esc(c.decision || "")}</div>
       </div>
-    </div>`).join("") + deterministic;
+    </div>`).join("");
 }
 
 

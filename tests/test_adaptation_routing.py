@@ -219,3 +219,77 @@ def test_a_rewrite_is_tested_in_the_week_it_is_written(monkeypatch):
         f"{[w for w in applied if w > rewrite_week] or 'never'} — "
         "the rewrite was never sent to anyone"
     )
+
+
+def _gap_state(week: int = 20):
+    """A case that has been losing at the technical round, ready for replan_gap."""
+    from src.agents import archaeologist, planner
+    from src.market import clock
+
+    inventory = archaeologist.extract(initial_state()["candidate"])
+    market = clock.snapshot(week)
+    target = planner.target(inventory, market, week)
+    return {
+        "week": week,
+        "inventory": inventory,
+        "market": market,
+        "target": target,
+        "plan": planner.plan(target, week),
+        "applications": [outcome(week, Stage.TECHNICAL) for _ in range(3)],
+        "signal_from_week": 0,
+        "repositioned": False,
+    }
+
+
+def test_a_gap_replan_that_keeps_the_target_says_it_deepened_the_plan():
+    from src.graph import replan_gap
+
+    state = _gap_state()
+    event = replan_gap(state)["events"][0]
+    assert event.summary == f"deepened the plan for {state['target'].title}"
+
+
+def test_a_gap_replan_that_moves_the_target_says_so(monkeypatch):
+    """replan_gap usually deepens the plan for the same role. When the planner
+    comes back with a DIFFERENT one, the timeline has to report a switch.
+
+    This is the case that went wrong in a real run: the target moved from
+    Logistics Systems Analyst to Customer Success Coordinator at week 25, and
+    the event still read "deepened the plan for Customer Success Coordinator" —
+    so the only trace of the change was a role name that had quietly altered,
+    with nothing on the timeline to account for it.
+    """
+    from src.contracts import TargetRole
+    from src.graph import replan_gap
+
+    state = _gap_state()
+    # Pin the role they were on. The double picks whatever is hiring most that
+    # week, which at week 20 is already Customer Success Coordinator — leave it
+    # and the test asserts a switch that never had anywhere to go.
+    state["target"] = state["target"].model_copy(
+        update={"title": "Logistics Systems Analyst"}
+    )
+    old_title = state["target"].title
+
+    def moved_on(inventory, market, week):
+        return TargetRole(
+            title="Customer Success Coordinator",
+            rationale="stub: the interview keeps testing something this role does not need",
+            missing_skills=["CRM platform proficiency"],
+            months_to_ready=3,
+            est_cost_sgd=2000,
+            reachable=True,
+            confidence=0.8,
+        )
+
+    monkeypatch.setattr("src.agents.planner.target", moved_on)
+    update = replan_gap(state)
+    event = update["events"][0]
+
+    assert event.summary == f"switched from {old_title} to Customer Success Coordinator"
+    # and the reason carries the NEW role's own rationale, not only the
+    # rejection pattern that triggered the re-plan
+    assert "the target moved too" in event.because, event.because
+    assert "does not need" in event.because, event.because
+    # a different target means the old framing has to go with it
+    assert update["positioning"] == ""
