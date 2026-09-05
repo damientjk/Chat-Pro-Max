@@ -229,7 +229,6 @@
       <div class="ticks" id="ticks"></div>
     </div>
     <span class="readout" id="readout">week 0 / 26</span>
-    <button id="live" hidden>Live</button>
   </div>
 
   <div class="grid">
@@ -313,10 +312,7 @@ let frames = [];
 let idx = -1;
 let playing = true;
 let timer = null;
-// Live runs render the newest frame the moment it lands; pausing, stepping or
-// scrubbing drops out of that, and the Live button restores it. Without this
-// the recorded-gap pacing would deliberately lag a live run behind itself.
-let following = CFG.mode === "live";
+const LIVE = CFG.mode === "live";
 let tab = "timeline";
 let liveCall = null;      // the call currently running, in live mode
 let elapsedTimer = null;
@@ -648,8 +644,6 @@ function syncControls() {
   $("scrub").value = String(Math.max(0, idx));
   $("readout").textContent = `week ${f.week ?? 0} / ${f.horizon ?? 26}`;
   $("play").textContent = playing ? "Pause" : "Play";
-  $("live").hidden = CFG.mode !== "live";
-  $("live").classList.toggle("on", following);
   renderTicks();
 }
 
@@ -659,20 +653,26 @@ function syncControls() {
 let ticksSignature = "";
 function renderTicks() {
   if (!frames.length) return;
-  const marks = [];
+  // One mark per frame, not one per event. A drift and the replan it causes
+  // are emitted by the same node, so they land on the same index and draw
+  // exactly on top of each other — four events showing as two marks, with the
+  // count and the tooltip both misleading. The last event at an index wins,
+  // which is the action taken rather than the trigger that prompted it.
+  const at = new Map();
   for (let i = 1; i < frames.length; i++) {
     const before = (frames[i - 1].events || []).length;
     for (const e of (frames[i].events || []).slice(before)) {
-      if (ADAPT.has(e.kind)) marks.push([i, e.kind]);
+      if (ADAPT.has(e.kind)) at.set(i, e.kind);
     }
   }
+  const marks = [...at.entries()];
   const sig = marks.map(m => m.join(":")).join("|") + "/" + frames.length;
   if (sig === ticksSignature) return;
   ticksSignature = sig;
   const span = Math.max(1, frames.length - 1);
   $("ticks").innerHTML = marks.map(([i, kind]) =>
     `<i style="left:${((i / span) * 100).toFixed(2)}%;background:${TICK_COLOUR[kind]}"
-        title="${kind} at frame ${i}"></i>`).join("");
+        title="${kind} — week ${frames[i].week}"></i>`).join("");
 }
 
 
@@ -721,29 +721,22 @@ function schedule() {
 $("play").onclick = () => {
   if (!playing && idx >= frames.length - 1 && frames.length) show(0);
   playing = !playing;
-  if (!playing) {
-    clearTimeout(timer);
-    hideWorking();
-    // Pausing a LIVE run has to stop following it too, or arriving frames keep
-    // yanking the view forward and the pause button appears not to work.
-    following = false;
-  } else {
-    if (CFG.mode === "live") following = true;
-    schedule();
-  }
+  if (!playing) { clearTimeout(timer); hideWorking(); }
+  else schedule();
   syncControls();
 };
-$("back").onclick = () => { playing = false; following = false; clearTimeout(timer); show(idx - 1); };
-$("fwd").onclick = () => { playing = false; following = false; clearTimeout(timer); show(idx + 1); };
-$("scrub").oninput = e => {
-  playing = false; following = false; clearTimeout(timer); show(Number(e.target.value));
-};
-$("live").onclick = () => {
-  // Skip the buffered backlog and show what the run is doing right now.
-  following = true; playing = true;
-  if (frames.length) show(frames.length - 1);
-  schedule();
-};
+$("back").onclick = () => { playing = false; clearTimeout(timer); show(idx - 1); };
+$("fwd").onclick = () => { playing = false; clearTimeout(timer); show(idx + 1); };
+$("scrub").oninput = e => { playing = false; clearTimeout(timer); show(Number(e.target.value)); };
+
+// A live run has no transport. Pausing, stepping and scrubbing are things you
+// do to a recording; offering them while a case is still being decided invites
+// someone to stop the run in front of an audience, and there is nothing to step
+// forward TO that has not happened yet. The bar stays as a progress indicator.
+if (LIVE) {
+  for (const id of ["play", "back", "fwd"]) $(id).hidden = true;
+  $("scrub").disabled = true;
+}
 
 for (const [id, name] of [["tab-timeline", "timeline"], ["tab-activity", "activity"]]) {
   $(id).onclick = () => {
@@ -755,6 +748,7 @@ for (const [id, name] of [["tab-timeline", "timeline"], ["tab-activity", "activi
 }
 
 document.addEventListener("keydown", e => {
+  if (LIVE) return;  // the controls these drive do not exist during a live run
   if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
   if (e.code === "Space") { e.preventDefault(); $("play").click(); }
   if (e.code === "ArrowLeft") $("back").click();
@@ -768,7 +762,11 @@ document.addEventListener("keydown", e => {
 
 const es = new EventSource("/events");
 es.onopen = () => { $("status").textContent = CFG.mode === "live" ? "live" : "replaying"; };
-es.onerror = () => { $("status").textContent = "disconnected"; };
+es.onerror = () => {
+  // Nothing is working if nothing is connected.
+  $("status").textContent = "disconnected";
+  hideWorking();
+};
 
 es.onmessage = ev => {
   const msg = JSON.parse(ev.data);
@@ -777,18 +775,22 @@ es.onmessage = ev => {
     // Live only. A replay drives the indicator from the recorded call on the
     // next frame instead, so the pause and the label stay in step with
     // whatever the viewer has scrubbed to.
-    if (CFG.mode !== "live") return;
-    // Only while the display has caught up. If playback is still working
-    // through buffered weeks, the frame on screen is not the one this call
-    // belongs to, and schedule() is already naming the right agent for it.
-    if (idx < frames.length - 1) return;
-    if (msg.phase === "start") {
-      liveCall = msg;
-      showWorking(msg.agent, msg.task, performance.now(), null);
-    } else if (liveCall && msg.agent === liveCall.agent) {
+    if (!LIVE) return;
+
+    // An "end" is never gated. Whatever the display is doing, that call has
+    // returned, and a banner left standing for finished work is worse than no
+    // banner — it is what kept "Screener ... 4.0s" on screen after the run was
+    // over. Only the "start" is gated, on having caught up: while playback is
+    // still working through buffered weeks the frame on screen is not the one
+    // this call belongs to, and schedule() is already naming the right agent.
+    if (msg.phase === "end") {
       liveCall = null;
       hideWorking();
+      return;
     }
+    if (idx < frames.length - 1) return;
+    liveCall = msg;
+    showWorking(msg.agent, msg.task, performance.now(), null);
     return;
   }
 
