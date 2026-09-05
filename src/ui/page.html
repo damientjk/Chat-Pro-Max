@@ -308,12 +308,19 @@ const TICK_COLOUR = {
   drift: "#e0a458", replan: "#6fa8dc", reposition: "#c58fd6", offer: "#57b894",
 };
 
-// Replay pacing. Gaps come from each frame's recorded `t`, so a twelve-second
-// model call reads as a real pause and an instant week-tick flicks past — the
-// recording carries its own rhythm, which is why there is no speed selector.
-// Clamped at both ends: below MIN a step is invisible, above MAX the viewer is
-// just waiting.
+// Pacing. Gaps come from each frame's recorded `t`, so a twelve-second model
+// call reads as a real pause — the run carries its own rhythm, which is why
+// there is no speed selector. Clamped at both ends: below MIN a step is
+// invisible, above MAX the viewer is just waiting.
 const MIN_GAP = 250, MAX_GAP = 3000;
+
+// But a WEEK gets its own, much longer floor. Weeks with no model call in them
+// are pure Python and land microseconds apart, so honouring their recorded gap
+// made the case leap from week 0 to week 10 with nothing legible in between —
+// the training that happens in those weeks went by too fast to read. Six months
+// is the span the whole product claim rests on, so each week has to be visible
+// as a week.
+const MIN_WEEK = CFG.minWeekMs ?? 2000;
 
 let frames = [];
 let idx = -1;
@@ -696,12 +703,23 @@ function renderTicks() {
 
 function gapBefore(i) {
   const a = frames[i - 1], b = frames[i];
-  if (!a || !b || typeof a.t !== "number" || typeof b.t !== "number") return CFG.fallbackMs;
-  return Math.min(MAX_GAP, Math.max(MIN_GAP, (b.t - a.t) * 1000 * CFG.pace));
+  if (!a || !b) return CFG.fallbackMs * CFG.pace;
+
+  const recorded = (typeof a.t === "number" && typeof b.t === "number")
+    ? (b.t - a.t) * 1000
+    : CFG.fallbackMs;
+
+  // A frame that moves the clock on is a week passing, and gets the week floor.
+  // Frames within one week — week 0 does intake, target and plan before the
+  // counter moves — keep the short floor, so a busy week does not cost eight
+  // seconds just for having several steps in it.
+  const floor = b.week !== a.week ? MIN_WEEK : MIN_GAP;
+  return Math.min(MAX_GAP + MIN_WEEK, Math.max(floor, recorded)) * CFG.pace;
 }
 
 function schedule() {
   clearTimeout(timer);
+  timer = null;
   if (!playing || idx >= frames.length - 1) return;
 
   const next = idx + 1;
@@ -711,10 +729,11 @@ function schedule() {
   // so the wait reads as work rather than as the page having stalled.
   const call = (frames[next].calls || [])[0];
   if (call && wait > MIN_GAP + 100) showWorking(call.agent, call.task, null, call.seconds);
-  else if (CFG.mode !== "live") hideWorking();
+  else hideWorking();
 
   timer = setTimeout(() => {
-    if (CFG.mode !== "live") hideWorking();
+    timer = null;
+    hideWorking();
     show(next);
     schedule();
   }, wait);
@@ -741,6 +760,7 @@ $("scrub").oninput = e => {
   playing = false; following = false; clearTimeout(timer); show(Number(e.target.value));
 };
 $("live").onclick = () => {
+  // Skip the buffered backlog and show what the run is doing right now.
   following = true; playing = true;
   if (frames.length) show(frames.length - 1);
   schedule();
@@ -779,6 +799,10 @@ es.onmessage = ev => {
     // next frame instead, so the pause and the label stay in step with
     // whatever the viewer has scrubbed to.
     if (CFG.mode !== "live") return;
+    // Only while the display has caught up. If playback is still working
+    // through buffered weeks, the frame on screen is not the one this call
+    // belongs to, and schedule() is already naming the right agent for it.
+    if (idx < frames.length - 1) return;
     if (msg.phase === "start") {
       liveCall = msg;
       showWorking(msg.agent, msg.task, performance.now(), null);
@@ -791,15 +815,22 @@ es.onmessage = ev => {
 
   frames.push(msg);
   if (idx < 0) show(0);
-  else if (following) show(frames.length - 1);
   else syncControls();
 
-  // A live run arrives slower than it plays, so the timer only ever has work
-  // to do in a replay or after scrubbing back.
-  if (playing && !following) schedule();
+  // A live run is played from the buffer too, at the same pace as a replay.
+  // Rendering each frame the moment it arrived was what let a live run leap
+  // from week 0 to week 10: those weeks make no model call, so they land
+  // together in a burst. Playing from the buffer costs a lag, and the lag is
+  // bounded — a real run spends minutes inside model calls, which is exactly
+  // when the player catches up. `Live` skips to now for anyone who would
+  // rather have the lead.
+  //
+  // Guarded on `timer`, or every frame in a burst would reset the pending
+  // wait and the display would never advance while frames were arriving.
+  if (playing && timer === null) schedule();
 };
 
-if (CFG.mode !== "live") schedule();
+schedule();
 syncControls();
 </script>
 </body>

@@ -71,6 +71,11 @@ OFFLINE_RECORDING = Path(__file__).resolve().parents[2] / ".offline_run.json"
 PAGE_FILE = Path(__file__).resolve().parent / "page.html"
 PORT = 8000
 
+# Minimum on-screen time for one simulated week. 26 weeks puts a floor of
+# about 52 seconds under the whole run, before any model call is added --
+# long enough to read, short enough to film. --pace scales it.
+MIN_WEEK_MS = 2000
+
 
 # --------------------------------------------------------------------------
 # Turning graph state into something a browser can draw
@@ -399,10 +404,17 @@ def main(argv: list[str] | None = None) -> None:
             )
 
     config = {
-        # Live renders each frame as it lands; replay plays the recorded gaps.
+        # Both modes play from the buffer at the recorded pace; the page only
+        # needs the mode to decide whether a live activity banner applies.
         "mode": "replay" if replay_path else "live",
         "pace": pace,
         "floor": _viability_floor(),
+        # The least time one simulated week may take on screen. Weeks with no
+        # model call in them are pure Python and land microseconds apart, so
+        # without a floor the case jumps from week 0 to week 10 and the
+        # training happening in between is never legible. Six months is the
+        # span the product claim rests on — each week has to read as a week.
+        "minWeekMs": MIN_WEEK_MS,
         # Used only for recordings made before frames carried their own timing.
         "fallbackMs": 700,
     }
