@@ -126,7 +126,9 @@ START -> intake -> target -> plan -> advance_week <-------------+
    |         |             |              |         |         |
  replan  replan_gap    retarget      reposition   apply       -+
    |         |             |              |         |
-   +---------+-------------+--------------+---------+-----------+
+   |         |             |              +-> apply |
+   |         |             |                   |    |
+   +---------+-------------+-------------------+----+----------+
                                                                 |
                                         every node returns here -+
 
@@ -139,6 +141,9 @@ takes one of three, depending on what the pattern says: dying at screening
 means the pitch is wrong (`reposition`), losing at the technical round means
 the plan missed a skill (`replan_gap`), and a rewrite that still cannot pass a
 screen means the target itself is wrong (`retarget`).
+
+A reposition goes straight to `apply` in the same week: a rewrite exists to
+be tested, and the horizon can arrive before the next scheduled batch would.
 
 `route()` has **no model call in it**. Control flow stays deterministic,
 unit-testable without a key, and identical across every take of the demo video.
@@ -167,27 +172,6 @@ non-technical: what it does, why it matters, and who is building which part.
 
 `contracts.py` is the only file more than one person depends on. Changing it
 after Day 1 is a whole-team decision.
-
-### R1 — signals and baseline
-
-Built in this order, each one usable on its own:
-
-1. `src/baseline/naive.py` — one-shot baseline recommender.
-2. `src/signals/rejection.py` — repeated-rejection re-plan signal.
-3. `src/signals/actions.py` — rejection-stage-specific re-plan guidance.
-4. `src/signals/outcomes.py` — baseline-versus-agent benefit metrics.
-5. `src/signals/events.py` — JSON-safe re-plan event for R2's second edge.
-6. `src/r1_workflow.py` — typed handoff of R1 evidence to R2.
-7. `evidence.md` — source log for claims in the deck.
-
-These now read the shared types from `src/contracts.py` — `SkillInventory`,
-`TargetRole`, `ApplicationOutcome` and `Stage` — rather than the temporary
-duck-typed shims they were written against. The baseline rule is unchanged: it
-selects once and never re-plans.
-
-```bash
-uv run python -m scripts.r1_demo
-```
 
 ## Where the stubs are
 
