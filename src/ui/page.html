@@ -20,6 +20,13 @@
     --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
+  /* The browser's own [hidden] rule is a USER-AGENT style, and any author rule
+     that sets display beats it outright — no specificity contest, author simply
+     wins. .working below sets display:flex, so `el.hidden = true` on the agent
+     banner did nothing at all: the element stayed on screen after the run had
+     finished, while the JavaScript that hid it ran correctly every time. State
+     it here as an author rule so hiding actually hides, for every element. */
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -645,9 +652,24 @@ function show(i) {
 
 function syncControls() {
   const f = frames[idx] || {};
-  $("scrub").max = String(Math.max(0, frames.length - 1));
-  $("scrub").value = String(Math.max(0, idx));
-  $("readout").textContent = `week ${f.week ?? 0} / ${f.horizon ?? 26}`;
+  const horizon = f.horizon ?? 26;
+  if (LIVE) {
+    // Track the six months, not the frames received. How many frames a run
+    // produces is not known until it ends, so indexing them made the bar read
+    // FULL the moment playback caught up with the buffer — at week 19 of 26,
+    // with no offer, the one thing the bar is there to show was wrong. It is
+    // disabled during a live run, so it is purely an indicator and can be
+    // measured in the unit the readout beside it already uses.
+    $("scrub").max = String(horizon);
+    $("scrub").value = String(f.week ?? 0);
+  } else {
+    // A replay scrubs, so it has to index frames: every step must be reachable,
+    // including the several that share one week. Reaching the last frame really
+    // is the end of the run, so a full bar is honest here.
+    $("scrub").max = String(Math.max(0, frames.length - 1));
+    $("scrub").value = String(Math.max(0, idx));
+  }
+  $("readout").textContent = `week ${f.week ?? 0} / ${horizon}`;
   $("play").textContent = playing ? "Pause" : "Play";
   renderTicks();
 }
@@ -681,9 +703,13 @@ function renderTicks() {
   const sig = marks.map(m => m.join(":")).join("|") + "/" + frames.length;
   if (sig === ticksSignature) return;
   ticksSignature = sig;
+  // Positioned in whatever unit the bar above is using, or the marks drift
+  // away from the thumb they are supposed to line up with.
+  const horizon = (frames[idx] || {}).horizon ?? 26;
   const span = Math.max(1, frames.length - 1);
+  const at100 = i => (LIVE ? frames[i].week / horizon : i / span) * 100;
   $("ticks").innerHTML = marks.map(([i, kind]) =>
-    `<i style="left:${((i / span) * 100).toFixed(2)}%;background:${TICK_COLOUR[kind]}"
+    `<i style="left:${at100(i).toFixed(2)}%;background:${TICK_COLOUR[kind]}"
         title="${kind} — week ${frames[i].week}"></i>`).join("");
 }
 
