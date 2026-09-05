@@ -267,15 +267,28 @@ def replan_gap(state: CaseState) -> dict:
     GAP ANALYSIS that missed something the interview tests. The fix is a better
     plan, not better words, which is why this is a different edge from
     reposition rather than a second flavour of it.
+
+    USUALLY that means a deeper plan for the SAME target. But _rebuild_plan asks
+    the planner afresh, against this week's market and everything learned since,
+    and it is allowed to come back with a different role — _framing_reset below
+    has always handled that case. When it does, this is a target change and has
+    to be reported as one: saying "deepened the plan for X" after quietly
+    swapping X for Y describes an event that did not happen, and leaves the
+    timeline with a switch nobody can account for.
     """
     week = state["week"]
     old = state["target"]
     fresh, new_plan, carried = _rebuild_plan(state, week)
+    switched = fresh.title != old.title
 
     because = _guidance(state) or (
         "applications keep reaching the technical round and stopping there, "
         "so the plan is missing a skill the interview tests"
     )
+    if switched:
+        # The new target's own reasoning, because the reader's question at this
+        # point is no longer "why change something" but "why THIS role".
+        because += f" — so the target moved too: {fresh.rationale}"
     if carried:
         because += f" — the {', '.join(carried)} work already done still counts"
 
@@ -285,9 +298,16 @@ def replan_gap(state: CaseState) -> dict:
         "signal_from_week": week,  # this pattern has been answered
         **_framing_reset(old, fresh),
         "events": [
-            Event(week=week, kind="replan",
-                  summary=f"deepened the plan for {fresh.title}",
-                  because=because),
+            Event(
+                week=week,
+                kind="replan",
+                summary=(
+                    f"switched from {old.title} to {fresh.title}"
+                    if switched
+                    else f"deepened the plan for {fresh.title}"
+                ),
+                because=because,
+            ),
         ],
     }
 

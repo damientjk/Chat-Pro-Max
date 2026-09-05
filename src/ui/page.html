@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reskilling Agent — live case</title>
+<!--
+  Served by src/ui/web.py. Lives as a real .html file rather than a Python
+  string so it gets highlighting and bracket matching: the previous version was
+  a 300-line raw string, and a CSS typo in it went unnoticed until it was
+  rendered. web.py injects one <script>window.CONFIG</script> block before this
+  page's own script runs.
+-->
+<style>
+  :root {
+    --bg: #0d1014; --panel: #151a21; --sunk: #11161c; --line: #232a34;
+    --ink: #e6ebf2; --muted: #8b96a6; --faint: #5d6775;
+    --accent: #6fa8dc; --ok: #57b894;
+    --drift: #e0a458; --replan: #6fa8dc; --offer: #57b894; --reposition: #c58fd6;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  /* The browser's own [hidden] rule is a USER-AGENT style, and any author rule
+     that sets display beats it outright — no specificity contest, author simply
+     wins. An element whose class sets display therefore goes on rendering
+     after `el.hidden = true`, with the JavaScript that hid it running
+     correctly every time — a silent failure that cost several rounds to find.
+     State it here as an author rule so hiding actually hides. */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  b, strong { font-weight: 600; }
+
+  /* ---- header ---------------------------------------------------------- */
+  .top {
+    display: flex; align-items: center; gap: 1.4rem; flex-wrap: wrap;
+    padding: 1.1rem 1.6rem; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .top h1 { margin: 0; font-size: 1.05rem; font-weight: 600; letter-spacing: -.01em; }
+  .wk {
+    font: 600 1.5rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--accent);
+  }
+  .status { font-size: .82rem; color: var(--muted); font-family: var(--mono); }
+  .top .status { margin-left: auto; }
+
+  /* ---- controls -------------------------------------------------------- */
+  .controls {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .7rem 1.6rem .9rem; border-bottom: 1px solid var(--line); background: var(--sunk);
+    font-size: .82rem; color: var(--muted);
+  }
+  .controls button {
+    background: #1d232c; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 4px; padding: .3rem .6rem; font: inherit; cursor: pointer;
+  }
+  .controls button:hover { border-color: #39424f; }
+  .controls button:focus-visible, .controls input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .controls button.on { border-color: var(--accent); color: var(--accent); }
+  .readout {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    color: var(--ink); white-space: nowrap;
+  }
+  /* The scrubber indexes graph steps, but the ticks and the readout are in
+     weeks — steps are not a unit anyone watching has a feel for. */
+  .track { position: relative; flex: 1; min-width: 200px; }
+  .track input { width: 100%; margin: 0; accent-color: var(--accent); display: block; }
+  .ticks { position: absolute; left: 8px; right: 8px; bottom: -7px; height: 6px; pointer-events: none; }
+  .ticks i {
+    position: absolute; width: 2px; height: 6px; border-radius: 1px;
+    transform: translateX(-1px);
+  }
+
+  /* ---- layout ---------------------------------------------------------- */
+  .grid {
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 1.1rem; padding: 1.1rem 1.6rem 3rem; align-items: start;
+  }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 1.1rem; min-width: 0; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 1.1rem 1.2rem;
+  }
+  .card h2 {
+    margin: 0 0 .9rem; font-size: .7rem; font-weight: 600; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: baseline; gap: .6rem;
+  }
+  .card h2 .sub { letter-spacing: 0; text-transform: none; color: var(--faint); font-weight: 400; }
+  .note { font-size: .78rem; color: var(--faint); margin-top: .6rem; }
+
+  /* A re-plan should look like a decision being retaken, not a string quietly
+     changing. Both cards that describe the target flash when it does. */
+  .flash { animation: flash 1.4s ease-out; }
+  @keyframes flash {
+    0% { border-color: var(--accent); background: #1a2431; }
+    100% { border-color: var(--line); background: var(--panel); }
+  }
+  @media (prefers-reduced-motion: reduce) { .flash { animation: none; } }
+
+  /* ---- target ---------------------------------------------------------- */
+  .target { font-size: 1.15rem; font-weight: 600; margin-bottom: .1rem; }
+  .bar { height: 12px; border-radius: 6px; background: #1d232c; overflow: hidden; margin: .75rem 0 .35rem; }
+  .bar > i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .35s ease; }
+  .figs { display: flex; gap: 1.6rem; flex-wrap: wrap; margin-top: .9rem; }
+  .fig { display: flex; flex-direction: column; gap: .1rem; }
+  .fig b { font: 600 1.2rem/1 var(--mono); font-variant-numeric: tabular-nums; }
+  .fig span { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+
+  /* ---- why this role --------------------------------------------------- */
+  .rationale { color: var(--ink); font-size: .9rem; }
+  .roles { display: flex; flex-direction: column; gap: .3rem; }
+  .role { display: grid; grid-template-columns: 1fr 3.2rem; gap: .6rem; align-items: center; font-size: .82rem; }
+  .role .name { display: flex; align-items: center; gap: .45rem; min-width: 0; }
+  .role .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .role .meter { height: 4px; border-radius: 2px; background: #2a323d; flex: 0 0 auto; }
+  .role .n { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+  .role.chosen { color: var(--ink); font-weight: 600; }
+  .role.chosen .meter { background: var(--accent); }
+  .role.under { color: var(--faint); }
+  .role.under .meter { background: #3a2a16; }
+  .role .tag { font-size: .68rem; color: var(--drift); font-weight: 400; letter-spacing: .02em; }
+
+  /* ---- training plan --------------------------------------------------- */
+  .steps { display: flex; flex-direction: column; }
+  .step {
+    display: grid; grid-template-columns: 1.1rem 3.1rem 1fr; gap: .6rem;
+    padding: .5rem 0; border-bottom: 1px solid var(--line); font-size: .88rem;
+  }
+  .step:last-child { border-bottom: none; }
+  .step .tick { color: var(--ok); font-size: .9rem; line-height: 1.5; }
+  .step .w { font-family: var(--mono); font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .step .gap { font-size: .78rem; color: var(--muted); margin-top: .1rem; }
+  .step .kind {
+    font: 600 .62rem/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    background: #232a34; color: var(--muted); border-radius: 3px; padding: 0 .35rem;
+    margin-right: .4rem;
+  }
+  .step.todo .desc, .step.todo .w { color: var(--muted); }
+
+  /* ---- chart ----------------------------------------------------------- */
+  svg { width: 100%; height: 190px; display: block; }
+  .axis { font: 400 10px var(--mono); fill: var(--faint); }
+  .legend { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: .78rem; color: var(--muted); margin-top: .5rem; }
+  .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: .35rem; }
+
+  /* ---- right column ---------------------------------------------------- */
+  .tabs { display: flex; gap: .3rem; margin-left: auto; }
+  .tabs button {
+    background: none; border: 1px solid transparent; color: var(--muted);
+    border-radius: 4px; padding: .15rem .5rem; font: inherit; font-size: .7rem;
+    letter-spacing: .08em; text-transform: uppercase; cursor: pointer;
+  }
+  .tabs button.on { color: var(--ink); border-color: var(--line); background: var(--sunk); }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .feed { display: flex; flex-direction: column; max-height: 70vh; overflow-y: auto; }
+
+  .ev { display: grid; grid-template-columns: 3.4rem 1fr; gap: .8rem; padding: .55rem .1rem; border-bottom: 1px solid var(--line); }
+  .ev:last-child { border-bottom: none; }
+  .ev .w { font: 500 .82rem/1.5 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ev .k {
+    display: inline-block; font: 600 .64rem/1.6 var(--mono); letter-spacing: .1em;
+    text-transform: uppercase; padding: 0 .4rem; border-radius: 3px; margin-bottom: .15rem;
+    background: #232a34; color: var(--muted);
+  }
+  .ev.drift .k { background: #3a2a16; color: var(--drift); }
+  .ev.replan .k { background: #16283a; color: var(--replan); }
+  .ev.reposition .k { background: #2e1f36; color: var(--reposition); }
+  .ev.offer .k { background: #14301f; color: var(--offer); }
+  .ev .s { font-size: .93rem; }
+  .ev .b { font-size: .83rem; color: var(--muted); margin-top: .1rem; }
+  .adapt { box-shadow: inset 2px 0 0 currentColor; padding-left: .6rem; }
+  .adapt.drift { color: var(--drift); } .adapt.replan { color: var(--replan); }
+  .adapt.reposition { color: var(--reposition); } .adapt.offer { color: var(--offer); }
+  .adapt .s, .adapt .b, .adapt .w { color: var(--ink); }
+  .adapt .b { color: var(--muted); }
+
+  .callstat {
+    display: flex; gap: 1.2rem; padding-bottom: .7rem; margin-bottom: .3rem;
+    border-bottom: 1px solid var(--line); font-size: .82rem; color: var(--muted);
+  }
+  .callstat b { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .call { display: grid; grid-template-columns: 3.4rem 1fr; gap: .8rem; padding: .6rem .1rem; border-bottom: 1px solid var(--line); }
+  .call .w { font: 500 .82rem/1.5 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .call .hd { display: flex; align-items: baseline; gap: .6rem; }
+  .call .agent {
+    font: 600 .64rem/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    background: #16283a; color: var(--accent); border-radius: 3px; padding: 0 .4rem;
+  }
+  .call .secs { margin-left: auto; font-family: var(--mono); font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .call .task { font-size: .84rem; color: var(--muted); margin-top: .2rem; }
+  .call .dec { font-size: .88rem; margin-top: .15rem; }
+  .call.failed .agent { background: #3a1a1a; color: #e08585; }
+  .empty { color: var(--faint); font-size: .85rem; padding: .8rem .1rem; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>Reskilling-to-Placement Agent</h1>
+    <span class="wk" id="wk">week 0</span>
+    <span class="status" id="status">connecting…</span>
+  </div>
+
+  <div class="controls">
+    <button id="play" aria-label="Play or pause">Pause</button>
+    <button id="back" aria-label="Step back">&larr;</button>
+    <button id="fwd" aria-label="Step forward">&rarr;</button>
+    <div class="track">
+      <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Scrub through the run">
+      <div class="ticks" id="ticks"></div>
+    </div>
+    <span class="readout" id="readout">week 0 / 26</span>
+  </div>
+
+  <div class="grid">
+    <div class="col">
+      <div class="card" id="targetcard">
+        <h2>Current target</h2>
+        <div class="target" id="target">—</div>
+        <div class="bar"><i id="rbar"></i></div>
+        <div style="font-size:.8rem;color:var(--muted)">
+          Readiness <b id="rpct" style="color:var(--ink)">0%</b>
+          — share of this target's skill gap already evidenced
+        </div>
+        <div class="figs">
+          <div class="fig"><b id="postings">—</b><span>postings</span></div>
+          <div class="fig"><b id="apps">0</b><span>applications</span></div>
+          <div class="fig"><b id="months">—</b><span>months to ready</span></div>
+          <div class="fig"><b id="conf">—</b><span>confidence</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Postings per week <span class="sub">for the roles we have targeted</span></h2>
+        <svg id="chart" viewBox="0 0 560 190" role="img"
+             aria-label="Weekly postings for each role the agent has targeted"></svg>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <div class="card" id="whycard">
+        <h2>Why this role <span class="sub" id="whywhen"></span></h2>
+        <div class="rationale" id="rationale">—</div>
+        <div class="roles" id="roles"></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card">
+        <h2>
+          <span id="feedtitle">Timeline</span>
+          <span class="tabs">
+            <button id="tab-timeline" class="on">Timeline</button>
+            <button id="tab-activity">Agent activity</button>
+          </span>
+        </h2>
+        <div class="feed" id="feed"></div>
+      </div>
+
+      <div class="card" id="plancard">
+        <h2>Training plan <span class="sub" id="plansub"></span></h2>
+        <div class="steps" id="steps"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+
+// web.py injects window.CONFIG above this script.
+const CFG = Object.assign({ mode: "replay", pace: 1, floor: 30, fallbackMs: 700 },
+                          window.CONFIG || {});
+
+const ADAPT = new Set(["drift", "replan", "reposition", "offer"]);
+const TICK_COLOUR = {
+  drift: "#e0a458", replan: "#6fa8dc", reposition: "#c58fd6", offer: "#57b894",
+};
+
+// Pacing. Gaps come from each frame's recorded `t`, so a twelve-second model
+// call reads as a real pause — the run carries its own rhythm, which is why
+// there is no speed selector. Clamped at both ends: below MIN a step is
+// invisible, above MAX the viewer is just waiting.
+const MIN_GAP = 250, MAX_GAP = 3000;
+
+// But a WEEK gets its own, much longer floor. Weeks with no model call in them
+// are pure Python and land microseconds apart, so honouring their recorded gap
+// made the case leap from week 0 to week 10 with nothing legible in between —
+// the training that happens in those weeks went by too fast to read. Six months
+// is the span the whole product claim rests on, so each week has to be visible
+// as a week.
+const MIN_WEEK = CFG.minWeekMs ?? 1000;
+
+let frames = [];
+let idx = -1;
+let playing = true;
+let timer = null;
+const LIVE = CFG.mode === "live";
+let tab = "timeline";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pct = v => Math.round(v * 100) + "%";
+
+
+// ---------------------------------------------------------------------------
+// The chart
+// ---------------------------------------------------------------------------
+
+function drawChart(upTo) {
+  const svg = $("chart");
+  const f = frames[upTo];
+  if (!f) { svg.innerHTML = ""; return; }
+
+  const horizon = f.horizon || 26;
+  const floor = f.floor ?? CFG.floor;
+
+  // Every role we have targeted so far, oldest first. Plotting the abandoned
+  // role alongside the current one is the whole picture: the old line dives
+  // under the floor in week 10 while the new one holds. Keeping only the
+  // current role, as this chart used to, throws that away at the exact moment
+  // it becomes worth seeing.
+  const targets = [];
+  for (let i = 0; i <= upTo; i++) {
+    const t = frames[i].target;
+    if (t && !targets.includes(t)) targets.push(t);
+  }
+  if (!targets.length) { svg.innerHTML = ""; $("legend").innerHTML = ""; return; }
+
+  const series = targets.map(role => {
+    const seen = new Map();
+    for (let i = 0; i <= upTo; i++) {
+      const fr = frames[i];
+      const v = fr.market ? fr.market[role] : null;
+      if (v != null) seen.set(fr.week, v);
+    }
+    return { role, pts: [...seen.entries()].sort((a, b) => a[0] - b[0]) };
+  }).filter(s => s.pts.length);
+
+  const W = 560, H = 190;
+  const L = 34, R = 10, T = 12, B = 24;          // gutters, for the axes
+  const peak = Math.max(floor * 1.4, ...series.flatMap(s => s.pts.map(p => p[1])));
+  const maxY = Math.ceil(peak * 1.1 / 20) * 20;  // a round number to label
+  const x = w => L + (w / Math.max(1, horizon)) * (W - L - R);
+  const y = v => H - B - (v / maxY) * (H - B - T);
+
+  const parts = [];
+
+  // y axis: zero, the floor, and the top. Three numbers is enough to read a
+  // value off the line, and more would crowd a 190px-tall chart.
+  for (const v of [0, floor, maxY]) {
+    parts.push(
+      `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"
+             stroke="#232a34" stroke-width="1"/>`,
+      `<text class="axis" x="${L - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end">${v}</text>`);
+  }
+  // x axis, every four weeks.
+  for (let w = 0; w <= horizon; w += 4) {
+    parts.push(`<text class="axis" x="${x(w).toFixed(1)}" y="${H - 8}" text-anchor="middle">${w}</text>`);
+  }
+  parts.push(`<text class="axis" x="${L}" y="${H - 8}" text-anchor="start" opacity="0"></text>`);
+
+  // the floor, redrawn dashed and labelled over the gridline
+  parts.push(
+    `<line x1="${L}" x2="${W - R}" y1="${y(floor).toFixed(1)}" y2="${y(floor).toFixed(1)}"
+           stroke="#e0a458" stroke-width="1" stroke-dasharray="4 4"/>`,
+    `<text class="axis" x="${W - R}" y="${(y(floor) - 5).toFixed(1)}" text-anchor="end"
+           fill="#e0a458">viability floor — ${floor} postings</text>`);
+
+  const current = f.target;
+  series.forEach(s => {
+    const live = s.role === current;
+    const stroke = live ? "#6fa8dc" : "#5d6775";
+    const d = s.pts.map(([w, v], i) => `${i ? "L" : "M"}${x(w).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    if (live) {
+      const last = s.pts[s.pts.length - 1], first = s.pts[0];
+      parts.push(`<path d="${d} L${x(last[0]).toFixed(1)},${y(0).toFixed(1)}
+                    L${x(first[0]).toFixed(1)},${y(0).toFixed(1)} Z"
+                    fill="rgba(111,168,220,.13)"/>`);
+    }
+    parts.push(`<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${live ? 2 : 1.4}"
+                      stroke-linejoin="round" stroke-linecap="round"
+                      ${live ? "" : 'stroke-dasharray="3 3"'}/>`);
+    const [lw, lv] = s.pts[s.pts.length - 1];
+    parts.push(`<circle cx="${x(lw).toFixed(1)}" cy="${y(lv).toFixed(1)}" r="3.5" fill="${stroke}"/>`);
+    if (live) {
+      parts.push(`<text class="axis" x="${(x(lw) - 7).toFixed(1)}" y="${(y(lv) - 7).toFixed(1)}"
+                        text-anchor="end" fill="#e6ebf2">${lv}</text>`);
+    }
+  });
+
+  svg.innerHTML = parts.join("");
+  $("legend").innerHTML = series.map(s =>
+    `<span><i style="background:${s.role === current ? "#6fa8dc" : "#5d6775"}"></i>${esc(s.role)}${
+      s.role === current ? "" : " (abandoned)"}</span>`).join("")
+    + `<span style="color:var(--faint)">x: week &nbsp; y: postings</span>`;
+}
+
+
+// ---------------------------------------------------------------------------
+// Why this role — what the planner was looking at
+// ---------------------------------------------------------------------------
+
+function renderWhy(f) {
+  $("rationale").textContent = f.rationale || "—";
+  $("whywhen").textContent = f.target ? `· chosen in week ${chosenWeek(f)}` : "";
+
+  const market = f.market || {};
+  const floor = f.floor ?? CFG.floor;
+  const roles = Object.entries(market).sort((a, b) => b[1] - a[1]);
+  if (!roles.length) { $("roles").innerHTML = ""; return; }
+
+  const top = roles[0][1] || 1;
+  $("roles").innerHTML = roles.map(([role, n]) => {
+    const chosen = role === f.target;
+    const under = n < floor;
+    const cls = "role" + (chosen ? " chosen" : "") + (under ? " under" : "");
+    return `<div class="${cls}">
+        <div class="name">
+          <i class="meter" style="width:${Math.max(2, (n / top) * 84).toFixed(0)}px"></i>
+          <span>${esc(role)}</span>
+          ${under ? '<span class="tag">below floor</span>' : ""}
+          ${chosen ? '<span class="tag" style="color:var(--accent)">chosen</span>' : ""}
+        </div>
+        <div class="n">${n}</div>
+      </div>`;
+  }).join("");
+}
+
+function chosenWeek(f) {
+  // The plan is rebuilt in the same node as the target, so its created_week is
+  // the week this target was picked. Falls back to walking the frames for a
+  // recording made before `plan` was streamed.
+  if (f.plan && typeof f.plan.created_week === "number") return f.plan.created_week;
+  for (let i = idx; i > 0; i--) {
+    if (frames[i - 1].target !== f.target) return frames[i].week;
+  }
+  return frames.length ? frames[0].week : 0;
+}
+
+
+// ---------------------------------------------------------------------------
+// The training plan
+// ---------------------------------------------------------------------------
+
+function renderPlan(f) {
+  const plan = f.plan;
+  if (!plan || !plan.steps || !plan.steps.length) {
+    $("plansub").textContent = "";
+    // "plan" is absent for two different reasons and they need different
+    // wording: before the planner has run there is genuinely no plan, but a
+    // recording made before the plan was streamed has one and simply did not
+    // send it. Telling a viewer of an old recording to "wait for the planner"
+    // would be a lie they could sit through for 26 weeks.
+    $("steps").innerHTML = f.week === 0
+      ? '<div class="empty">No plan yet — the planner runs after intake.</div>'
+      : '<div class="empty">This recording predates plan streaming. Record a new '
+        + 'run to see the steps.</div>';
+    return;
+  }
+  const done = plan.steps.filter(s => s.week <= f.week).length;
+  $("plansub").textContent =
+    `· ${plan.steps.length} steps · ${done} of ${plan.steps.length} done`;
+
+  $("steps").innerHTML = plan.steps.map(s => {
+    const complete = s.week <= f.week;
+    return `<div class="step ${complete ? "done" : "todo"}">
+        <div class="tick">${complete ? "✓" : ""}</div>
+        <div class="w">wk ${s.week}</div>
+        <div>
+          <div class="desc"><span class="kind">${esc(s.kind)}</span>${esc(s.description)}</div>
+          <div class="gap">closes: ${esc(s.closes_gap)}</div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+
+// ---------------------------------------------------------------------------
+// The right-hand column: timeline, or the model calls behind it
+// ---------------------------------------------------------------------------
+
+function renderFeed(f) {
+  $("feedtitle").textContent = tab === "timeline" ? "Timeline" : "Agent activity";
+  $("feed").innerHTML = tab === "timeline" ? timelineHtml(f) : activityHtml(f);
+  if (tab === "timeline") { const el = $("feed"); el.scrollTop = el.scrollHeight; }
+}
+
+function timelineHtml(f) {
+  const events = f.events || [];
+  if (!events.length) return '<div class="empty">Nothing has happened yet.</div>';
+  return events.map(e => {
+    const adapt = ADAPT.has(e.kind);
+    const cls = `ev ${e.kind}` + (adapt ? ` adapt ${e.kind}` : "");
+    const because = e.because ? `<div class="b">${esc(e.because)}</div>` : "";
+    return `<div class="${cls}">
+        <div class="w">wk ${e.week}</div>
+        <div><span class="k">${esc(e.kind)}</span>
+             <div class="s">${esc(e.summary)}</div>${because}</div>
+      </div>`;
+  }).join("");
+}
+
+function callsUpTo(i) {
+  const out = [];
+  for (let n = 0; n <= i && n < frames.length; n++) {
+    for (const c of frames[n].calls || []) out.push({ ...c, week: frames[n].week });
+  }
+  return out;
+}
+
+function activityHtml(f) {
+  const calls = callsUpTo(idx);
+  if (!calls.length) {
+    return '<div class="empty">No model calls recorded. This recording predates '
+      + 'agent tracing — run <code>uv run python -m src.ui.web</code> once to '
+      + 'capture a new one.</div>';
+  }
+
+  const total = calls.reduce((a, c) => a + (c.seconds || 0), 0);
+  const head = `<div class="callstat">
+      <span><b>${calls.length}</b> model calls</span>
+      <span><b>${total.toFixed(1)}s</b> of model time</span>
+    </div>`;
+
+  return head + calls.map(c => `
+    <div class="call ${c.failed ? "failed" : ""}">
+      <div class="w">wk ${c.week}</div>
+      <div>
+        <div class="hd">
+          <span class="agent">${esc(c.agent)}</span>
+          <span class="secs">${(c.seconds ?? 0).toFixed(1)}s</span>
+        </div>
+        <div class="task">${esc(c.task)}</div>
+        <div class="dec">→ ${esc(c.decision || "")}</div>
+      </div>
+    </div>`).join("");
+}
+
+
+// ---------------------------------------------------------------------------
+// Render one frame
+// ---------------------------------------------------------------------------
+
+function show(i) {
+  if (i < 0 || i >= frames.length) return;
+  const changed = idx >= 0 && frames[idx] && frames[i].target !== frames[idx].target;
+  idx = i;
+  const f = frames[i];
+
+  $("wk").textContent = `week ${f.week}`;
+  $("target").textContent = f.target || "—";
+  $("rbar").style.width = pct(f.readiness || 0);
+  $("rpct").textContent = pct(f.readiness || 0);
+  $("postings").textContent = f.postings ?? "—";
+  $("apps").textContent = f.applications;
+  $("months").textContent = f.months_to_ready ?? "—";
+  $("conf").textContent = f.confidence == null ? "—" : pct(f.confidence);
+
+  renderWhy(f);
+  renderPlan(f);
+  drawChart(i);
+  renderFeed(f);
+
+  if (changed) {
+    for (const id of ["whycard", "plancard"]) {
+      const el = $(id);
+      el.classList.remove("flash");
+      void el.offsetWidth;        // restart the animation
+      el.classList.add("flash");
+    }
+  }
+
+  if (f.finished) {
+    // The graph records WHY a case stopped, so this can say it plainly rather
+    // than guessing from an empty string. Adaptations are counted alongside:
+    // two of them and no offer is a very different result from a run where
+    // nothing ever happened.
+    const adaptations = (f.events || []).filter(e => ADAPT.has(e.kind) && e.kind !== "offer").length;
+    const ending = f.outcome === "placed" ? "placed" : `no offer in ${f.horizon} weeks`;
+    $("status").textContent =
+      `finished — ${adaptations} adaptation${adaptations === 1 ? "" : "s"}, ${ending}`;
+  }
+  syncControls();
+}
+
+function syncControls() {
+  const f = frames[idx] || {};
+  const horizon = f.horizon ?? 26;
+  if (LIVE) {
+    // Track the six months, not the frames received. How many frames a run
+    // produces is not known until it ends, so indexing them made the bar read
+    // FULL the moment playback caught up with the buffer — at week 19 of 26,
+    // with no offer, the one thing the bar is there to show was wrong. It is
+    // disabled during a live run, so it is purely an indicator and can be
+    // measured in the unit the readout beside it already uses.
+    $("scrub").max = String(horizon);
+    $("scrub").value = String(f.week ?? 0);
+  } else {
+    // A replay scrubs, so it has to index frames: every step must be reachable,
+    // including the several that share one week. Reaching the last frame really
+    // is the end of the run, so a full bar is honest here.
+    $("scrub").max = String(Math.max(0, frames.length - 1));
+    $("scrub").value = String(Math.max(0, idx));
+  }
+  $("readout").textContent = `week ${f.week ?? 0} / ${horizon}`;
+  $("play").textContent = playing ? "Pause" : "Play";
+  renderTicks();
+}
+
+// One tick per adaptation, positioned by frame index so it lines up with the
+// scrubber thumb. The bar stops being a meaningless "37 / 37" and becomes a
+// map: you can see at a glance that this run adapted twice and where.
+let ticksSignature = "";
+function renderTicks() {
+  if (!frames.length) return;
+  // One mark per frame, not one per event. A drift and the replan it causes
+  // are emitted by the same node, so they land on the same index and draw
+  // exactly on top of each other — four events showing as two marks, with the
+  // count and the tooltip both misleading. The last event at an index wins,
+  // which is the action taken rather than the trigger that prompted it.
+  //
+  // Only up to the frame being SHOWN, never the whole buffer. Frames arrive
+  // ahead of playback — a live run receives week 10 while the viewer is still
+  // watching week 8 — so marking every buffered adaptation put a tick on the
+  // bar for a pivot that had not happened yet, several weeks before the
+  // timeline said anything about it. The bar is a record of the case so far,
+  // not a preview of it.
+  const at = new Map();
+  for (let i = 1; i <= idx && i < frames.length; i++) {
+    const before = (frames[i - 1].events || []).length;
+    for (const e of (frames[i].events || []).slice(before)) {
+      if (ADAPT.has(e.kind)) at.set(i, e.kind);
+    }
+  }
+  const marks = [...at.entries()];
+  const sig = marks.map(m => m.join(":")).join("|") + "/" + frames.length;
+  if (sig === ticksSignature) return;
+  ticksSignature = sig;
+  // Positioned in whatever unit the bar above is using, or the marks drift
+  // away from the thumb they are supposed to line up with.
+  const horizon = (frames[idx] || {}).horizon ?? 26;
+  const span = Math.max(1, frames.length - 1);
+  const at100 = i => (LIVE ? frames[i].week / horizon : i / span) * 100;
+  $("ticks").innerHTML = marks.map(([i, kind]) =>
+    `<i style="left:${at100(i).toFixed(2)}%;background:${TICK_COLOUR[kind]}"
+        title="${kind} — week ${frames[i].week}"></i>`).join("");
+}
+
+
+// ---------------------------------------------------------------------------
+// Playback
+// ---------------------------------------------------------------------------
+
+function gapBefore(i) {
+  const a = frames[i - 1], b = frames[i];
+  if (!a || !b) return CFG.fallbackMs * CFG.pace;
+
+  const recorded = (typeof a.t === "number" && typeof b.t === "number")
+    ? (b.t - a.t) * 1000
+    : CFG.fallbackMs;
+
+  // A frame that moves the clock on is a week passing, and gets the week floor.
+  // Frames within one week — week 0 does intake, target and plan before the
+  // counter moves — keep the short floor, so a busy week does not cost eight
+  // seconds just for having several steps in it.
+  const floor = b.week !== a.week ? MIN_WEEK : MIN_GAP;
+  return Math.min(MAX_GAP + MIN_WEEK, Math.max(floor, recorded)) * CFG.pace;
+}
+
+function schedule() {
+  clearTimeout(timer);
+  timer = null;
+  if (!playing || idx >= frames.length - 1) return;
+
+  // The pause itself is what shows a model call happening: gapBefore holds the
+  // frame back for as long as the call took, so a long call reads as a wait
+  // rather than as a step that never came. What the call WAS is the Agent
+  // activity tab's job.
+  timer = setTimeout(() => {
+    timer = null;
+    show(idx + 1);
+    schedule();
+  }, gapBefore(idx + 1));
+}
+
+$("play").onclick = () => {
+  if (!playing && idx >= frames.length - 1 && frames.length) show(0);
+  playing = !playing;
+  if (!playing) clearTimeout(timer);
+  else schedule();
+  syncControls();
+};
+$("back").onclick = () => { playing = false; clearTimeout(timer); show(idx - 1); };
+$("fwd").onclick = () => { playing = false; clearTimeout(timer); show(idx + 1); };
+$("scrub").oninput = e => { playing = false; clearTimeout(timer); show(Number(e.target.value)); };
+
+// A live run has no transport. Pausing, stepping and scrubbing are things you
+// do to a recording; offering them while a case is still being decided invites
+// someone to stop the run in front of an audience, and there is nothing to step
+// forward TO that has not happened yet. The bar stays as a progress indicator.
+if (LIVE) {
+  for (const id of ["play", "back", "fwd"]) $(id).hidden = true;
+  $("scrub").disabled = true;
+}
+
+for (const [id, name] of [["tab-timeline", "timeline"], ["tab-activity", "activity"]]) {
+  $(id).onclick = () => {
+    tab = name;
+    $("tab-timeline").classList.toggle("on", tab === "timeline");
+    $("tab-activity").classList.toggle("on", tab === "activity");
+    if (frames[idx]) renderFeed(frames[idx]);
+  };
+}
+
+document.addEventListener("keydown", e => {
+  if (LIVE) return;  // the controls these drive do not exist during a live run
+  if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
+  if (e.code === "Space") { e.preventDefault(); $("play").click(); }
+  if (e.code === "ArrowLeft") $("back").click();
+  if (e.code === "ArrowRight") $("fwd").click();
+});
+
+
+// ---------------------------------------------------------------------------
+// The stream
+// ---------------------------------------------------------------------------
+
+const es = new EventSource("/events");
+es.onopen = () => { $("status").textContent = CFG.mode === "live" ? "live" : "replaying"; };
+es.onerror = () => { $("status").textContent = "disconnected"; };
+
+es.onmessage = ev => {
+  const msg = JSON.parse(ev.data);
+
+  // Activity messages drove the header banner, which is gone. They are still
+  // recognised so that one can never be mistaken for a frame and pushed onto
+  // the timeline.
+  if (msg.kind !== "frame") return;
+
+  frames.push(msg);
+  if (idx < 0) show(0);
+  else syncControls();
+
+  // A live run is played from the buffer too, at the same pace as a replay.
+  // Rendering each frame the moment it arrived was what let a live run leap
+  // from week 0 to week 10: those weeks make no model call, so they land
+  // together in a burst. Playing from the buffer costs a lag, and the lag is
+  // bounded — a real run spends minutes inside model calls, which is exactly
+  // when the player catches up. `Live` skips to now for anyone who would
+  // rather have the lead.
+  //
+  // Guarded on `timer`, or every frame in a burst would reset the pending
+  // wait and the display would never advance while frames were arriving.
+  if (playing && timer === null) schedule();
+};
+
+schedule();
+syncControls();
+</script>
+</body>
+</html>

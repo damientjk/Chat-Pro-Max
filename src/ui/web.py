@@ -1,18 +1,40 @@
 """Live web timeline. Owner: R5.
 
     uv run python -m src.ui.web                 # live run, real model calls
+    uv run python -m src.ui.web --offline       # real graph, stub agents, no key
     uv run python -m src.ui.web --replay        # replay the last run, no key
     uv run python -m src.ui.web --replay F.json # replay a specific saved run
-    uv run python -m src.ui.web --replay --speed 2   # 2 seconds per step
+    uv run python -m src.ui.web --replay --pace 0.5   # replay at half the gaps
 
-The page has its own transport: play/pause, speed, step, and a scrubber, so
-the pace can be changed while filming without restarting anything. Space
-toggles play, arrow keys step. --speed only sets where it starts.
+--offline records to .offline_run.json, never over the live .last_run.json:
+stub output must never be the thing that gets filmed by mistake.
+
+A long model call shows as a pause of the same length, not as a label: the
+frame is simply held back until the call would have returned. Which agent it
+was, and what it decided, is the Agent activity panel's job.
+
+The page has play/pause, step and a scrubber. Space toggles play, arrow keys
+step. There is deliberately NO speed control: the pace comes from the run
+itself. Every frame carries the time it landed, so a replay reproduces the real
+gaps -- a twelve-second model call is a real pause with the agent named, an
+instant week-tick flicks past. A dropdown offering "2x" made no sense during a
+live run, where the pace is whatever the model takes.
 
 The terminal renderer in timeline.py stays the source of truth for what an
 event MEANS. This serves the same event log to a browser so the six months can
 be watched as a shape -- postings collapsing, readiness resetting on the pivot
 -- rather than read as a wall of text.
+
+WHAT THE PAGE IS TOLD, AND WHY
+------------------------------
+The frame is the whole contract with the browser. Beyond the case state it
+carries three things that exist only to make the run legible:
+
+  t       when this frame landed, so a replay can reproduce the waiting
+  calls   the model calls the node made, from ui/activity.py -- which agent,
+          what it was doing, how long it took, what it decided
+  plan    the actual training steps. They were in CaseState from Day 1 and had
+          never reached the browser, so the plan read as "4-step plan to X"
 
 WHY STDLIB ONLY
 ---------------
@@ -21,12 +43,15 @@ response does the whole job, so nothing enters pyproject.toml, requirements.txt
 is unchanged, and Day 5's fresh-clone gate cannot fail because of this file. A
 demo aid is not worth a dependency on the submission path.
 
-REPLAY IS THE ONE TO FILM
--------------------------
-A live run makes ~9 model calls, takes minutes, and on Groq's free tier can be
-rate-limited mid-take. Every live run therefore saves itself to .last_run.json,
-and --replay re-streams that recording with no key and no network. Get one good
-live run, then film the replay as many times as you like.
+LIVE AND REPLAY ARE BOTH FIRST-CLASS
+------------------------------------
+Either may be what the judges see, so neither is a fallback for the other. Live
+renders each frame as it lands and drives the working indicator from real-time
+activity messages; replay plays back on the recorded gaps and drives the same
+indicator from each frame's recorded calls. Every live run still saves itself
+to .last_run.json, because a live run makes ~9 model calls, takes minutes, and
+on Groq's free tier can be rate-limited mid-take -- so get one good live run,
+and film the replay as many times as you like.
 """
 
 from __future__ import annotations
@@ -45,7 +70,15 @@ from ..market import clock
 from .timeline import calculate_readiness
 
 RECORDING = Path(__file__).resolve().parents[2] / ".last_run.json"
+# Stub runs are kept apart from the real one — see work() below.
+OFFLINE_RECORDING = Path(__file__).resolve().parents[2] / ".offline_run.json"
+PAGE_FILE = Path(__file__).resolve().parent / "page.html"
 PORT = 8000
+
+# Minimum on-screen time for one simulated week. 26 weeks puts a floor of
+# about 26 seconds under the whole run, before any model call is added --
+# long enough to read, short enough to film. --pace scales it.
+MIN_WEEK_MS = 1000
 
 
 # --------------------------------------------------------------------------
@@ -53,7 +86,25 @@ PORT = 8000
 # --------------------------------------------------------------------------
 
 
-def _frame(state: CaseState, node: str) -> dict:
+def _plan_json(state: CaseState) -> dict | None:
+    """The training plan, for the browser.
+
+    The Plan has been in CaseState since Day 1 and had never left it: the page
+    showed "4-step plan to Supply Chain Data Analyst" and nothing about what
+    the four steps were. `supersedes` is included because it is the field that
+    makes a re-plan read as carrying work forward rather than starting over.
+    """
+    plan = state.get("plan")
+    if not plan:
+        return None
+    return {
+        "created_week": plan.created_week,
+        "supersedes": plan.supersedes,
+        "steps": [s.model_dump() for s in plan.steps],
+    }
+
+
+def _frame(state: CaseState, node: str, *, t: float, calls: list[dict]) -> dict:
     """One update: everything the page needs to redraw, as plain JSON.
 
     The whole state is sent each time rather than a diff. Twenty-six weeks of
@@ -66,9 +117,16 @@ def _frame(state: CaseState, node: str) -> dict:
     inventory = state.get("inventory")
 
     return {
+        "kind": "frame",
         "week": state.get("week", 0),
         "horizon": clock.HORIZON_WEEKS,
         "node": node,
+        # Seconds since the run began. This is what lets a replay reproduce the
+        # real pauses instead of evening every step out to a fixed tick, which
+        # is what made the model calls invisible.
+        "t": round(t, 3),
+        # The model calls the node that produced this frame made, if any.
+        "calls": calls,
         "target": target.title if target else None,
         "rationale": target.rationale if target else "",
         "months_to_ready": target.months_to_ready if target else None,
@@ -82,6 +140,7 @@ def _frame(state: CaseState, node: str) -> dict:
             market.postings_by_role.get(target.title, 0) if market and target else None
         ),
         "market": market.postings_by_role if market else {},
+        "plan": _plan_json(state),
         "events": [e.model_dump() for e in state.get("events", [])],
         "applications": len(state.get("applications", [])),
         "outcome": state.get("outcome", ""),
@@ -89,10 +148,39 @@ def _frame(state: CaseState, node: str) -> dict:
     }
 
 
-def run_case(emit) -> None:
-    """Drive the real graph, calling emit(frame) as each node lands."""
+def run_case(emit, offline: bool = False) -> None:
+    """Drive the real graph, calling emit(message) as the case progresses.
+
+    One kind of message goes out: `frame`, the case state after a node. Model
+    calls reach the page on the frame of the node that made them, so they are
+    read back at the point in the run they belong to rather than whenever they
+    happened to finish. There was a second, live channel feeding a header
+    banner; the banner is gone and so is the channel.
+    """
     from ..graph import build, memory_checkpointer
     from ..run_demo import initial_state
+    from . import activity
+
+    if offline:
+        # Development only: the real graph, the real routing, stub agents.
+        from scripts.preview_ui import install_doubles
+
+        install_doubles()
+
+    started = time.monotonic()
+    # Calls finish inside a node, before that node's frame exists. They are
+    # collected here and drained onto the next frame, so a scrubbed-back
+    # viewer sees the calls attributed to the step they actually produced.
+    pending: list[dict] = []
+    # The week a call happened in is the week of the last frame: a node runs on
+    # the state as it stood before it, which is exactly what that frame holds.
+    seen = {"week": 0}
+
+    def on_activity(record: dict) -> None:
+        if record.get("phase") == "end":
+            pending.append({**record, "week": seen["week"]})
+
+    activity.instrument(on_activity)
 
     app = build(checkpointer=memory_checkpointer())
     config = {
@@ -115,9 +203,14 @@ def run_case(emit) -> None:
                 node = name
         else:
             latest = chunk
-            emit(_frame(latest, node))
+            calls, pending[:] = list(pending), []
+            emit(_frame(latest, node, t=time.monotonic() - started, calls=calls))
+            seen["week"] = latest.get("week", 0)
 
-    emit({**_frame(latest, "end"), "finished": True})
+    emit({
+        **_frame(latest, "end", t=time.monotonic() - started, calls=list(pending)),
+        "finished": True,
+    })
 
 
 # --------------------------------------------------------------------------
@@ -169,7 +262,7 @@ class Broadcast:
 # --------------------------------------------------------------------------
 
 
-def make_handler(bus: Broadcast, interval_ms: int):
+def make_handler(bus: Broadcast, config: dict):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -180,7 +273,7 @@ def make_handler(bus: Broadcast, interval_ms: int):
             if self.path.startswith("/events"):
                 self._sse()
             else:
-                body = PAGE.replace("__INTERVAL_MS__", str(interval_ms)).encode("utf-8")
+                body = _render_page(config).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -220,302 +313,27 @@ def make_handler(bus: Broadcast, interval_ms: int):
 # The page
 # --------------------------------------------------------------------------
 
-PAGE = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reskilling Agent — live case</title>
-<style>
-  :root {
-    --bg: #0d1014; --panel: #151a21; --line: #232a34;
-    --ink: #e6ebf2; --muted: #8b96a6;
-    --accent: #6fa8dc; --ok: #57b894;
-    --drift: #e0a458; --replan: #6fa8dc; --offer: #57b894; --reposition: #c58fd6;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  .top {
-    display: flex; align-items: baseline; gap: 1.4rem; flex-wrap: wrap;
-    padding: 1.1rem 1.6rem; border-bottom: 1px solid var(--line); background: var(--panel);
-  }
-  .top h1 { margin: 0; font-size: 1.05rem; font-weight: 600; letter-spacing: -.01em; }
-  .wk {
-    font: 600 1.5rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-variant-numeric: tabular-nums; color: var(--accent);
-  }
-  .status { margin-left: auto; font-size: .82rem; color: var(--muted); font-family: ui-monospace, monospace; }
-  .controls {
-    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
-    padding: .7rem 1.6rem; border-bottom: 1px solid var(--line); background: #11161c;
-    font-size: .82rem; color: var(--muted);
-  }
-  .controls button, .controls select {
-    background: #1d232c; color: var(--ink); border: 1px solid var(--line);
-    border-radius: 4px; padding: .3rem .6rem; font: inherit; cursor: pointer;
-  }
-  .controls button:hover, .controls select:hover { border-color: #39424f; }
-  .controls button:focus-visible, .controls select:focus-visible,
-  .controls input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .controls label { display: flex; align-items: center; gap: .4rem; }
-  .controls input[type=range] { flex: 1; min-width: 140px; accent-color: var(--accent); }
-  .controls .count { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
-  .grid { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap: 1.1rem; padding: 1.1rem 1.6rem 3rem; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1.1rem 1.2rem; }
-  .card h2 {
-    margin: 0 0 .9rem; font-size: .7rem; font-weight: 600; letter-spacing: .13em;
-    text-transform: uppercase; color: var(--muted);
-  }
-  .target { font-size: 1.15rem; font-weight: 600; margin-bottom: .2rem; }
-  .rationale { color: var(--muted); font-size: .88rem; margin-bottom: 1rem; }
-  .bar { height: 12px; border-radius: 6px; background: #1d232c; overflow: hidden; margin: .5rem 0 .35rem; }
-  .bar > i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .35s ease; }
-  .figs { display: flex; gap: 1.6rem; flex-wrap: wrap; margin-top: .9rem; }
-  .fig { display: flex; flex-direction: column; gap: .1rem; }
-  .fig b { font: 600 1.2rem/1 ui-monospace, monospace; font-variant-numeric: tabular-nums; }
-  .fig span { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
-  svg { width: 100%; height: 150px; display: block; }
-  .feed { display: flex; flex-direction: column; gap: .55rem; max-height: 62vh; overflow-y: auto; }
-  .ev { display: grid; grid-template-columns: 3.4rem 1fr; gap: .8rem; padding: .55rem .1rem; border-bottom: 1px solid var(--line); }
-  .ev:last-child { border-bottom: none; }
-  .ev .w { font: 500 .82rem/1.5 ui-monospace, monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .ev .k {
-    display: inline-block; font: 600 .64rem/1.6 ui-monospace, monospace; letter-spacing: .1em;
-    text-transform: uppercase; padding: 0 .4rem; border-radius: 3px; margin-bottom: .15rem;
-    background: #232a34; color: var(--muted);
-  }
-  .ev.drift .k { background: #3a2a16; color: var(--drift); }
-  .ev.replan .k { background: #16283a; color: var(--replan); }
-  .ev.reposition .k { background: #2e1f36; color: var(--reposition); }
-  .ev.offer .k { background: #14301f; color: var(--offer); }
-  .ev .s { font-size: .93rem; }
-  .ev .b { font-size: .83rem; color: var(--muted); margin-top: .1rem; }
-  .adapt { box-shadow: inset 2px 0 0 currentColor; padding-left: .6rem; }
-  .adapt.drift { color: var(--drift); } .adapt.replan { color: var(--replan); }
-  .adapt.reposition { color: var(--reposition); } .adapt.offer { color: var(--offer); }
-  .adapt .s, .adapt .b, .adapt .w { color: var(--ink); }
-  .adapt .b { color: var(--muted); }
-</style>
-</head>
-<body>
-  <div class="top">
-    <h1>Reskilling-to-Placement Agent</h1>
-    <span class="wk" id="wk">week 0</span>
-    <span id="node" style="color:var(--muted);font-family:ui-monospace,monospace;font-size:.82rem"></span>
-    <span class="status" id="status">connecting…</span>
-  </div>
 
-  <div class="controls">
-    <button id="play" aria-label="Play or pause">Pause</button>
-    <label>Speed
-      <select id="speed">
-        <option value="2000">0.5x — slowest</option>
-        <option value="1200">0.75x</option>
-        <option value="700" selected>1x</option>
-        <option value="350">2x</option>
-        <option value="120">4x</option>
-      </select>
-    </label>
-    <button id="back" aria-label="Step back">&larr;</button>
-    <button id="fwd" aria-label="Step forward">&rarr;</button>
-    <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Scrub through the run">
-    <span class="count" id="count">0 / 0</span>
-  </div>
+def _render_page(config: dict) -> str:
+    """page.html, with one config block injected ahead of its own script.
 
-  <div class="grid">
-    <div style="display:flex;flex-direction:column;gap:1.1rem">
-      <div class="card">
-        <h2>Current target</h2>
-        <div class="target" id="target">—</div>
-        <div class="rationale" id="rationale"></div>
-        <div class="bar"><i id="rbar"></i></div>
-        <div style="font-size:.8rem;color:var(--muted)">
-          Readiness <b id="rpct" style="color:var(--ink)">0%</b>
-          — share of this target's skill gap already evidenced
-        </div>
-        <div class="figs">
-          <div class="fig"><b id="postings">—</b><span>postings</span></div>
-          <div class="fig"><b id="apps">0</b><span>applications</span></div>
-          <div class="fig"><b id="months">—</b><span>months to ready</span></div>
-          <div class="fig"><b id="conf">—</b><span>confidence</span></div>
-        </div>
-      </div>
-      <div class="card">
-        <h2>Postings for the current target</h2>
-        <svg id="chart" viewBox="0 0 520 150" preserveAspectRatio="none" role="img"
-             aria-label="Postings for the role being trained toward, by week"></svg>
-        <div style="font-size:.78rem;color:var(--muted);margin-top:.4rem">
-          Dashed line is the viability floor. Crossing it is what fires the re-plan.
-        </div>
-      </div>
-    </div>
+    The page used to live here as a 300-line raw string. It is HTML, CSS and
+    JavaScript, and inside a Python string it gets no highlighting and no
+    bracket matching -- a CSS typo in it survived review and only showed up
+    when the thing was rendered. It is a real file now, read fresh on every
+    request so a reload picks up an edit without restarting the server.
 
-    <div class="card">
-      <h2>Timeline</h2>
-      <div class="feed" id="feed"></div>
-    </div>
-  </div>
-
-<script>
-const ADAPT = new Set(["drift", "replan", "reposition", "offer"]);
-const FLOOR = 30;
-
-// Frames are BUFFERED and played back on a timer rather than rendered the
-// moment they arrive. That is what makes the run watchable: a replay can be
-// paused on the pivot, stepped through, or scrubbed back, and a live run still
-// renders as it goes because frames simply arrive slower than the timer.
-let frames = [];
-let idx = -1;
-let playing = true;
-let interval = __INTERVAL_MS__;
-let timer = null;
-
-const $ = id => document.getElementById(id);
-
-function drawChart(upTo, horizon) {
-  // Rebuilt from scratch each render so scrubbing backwards shows the chart as
-  // it was, not as it ended. Thirty-odd points — the cost is irrelevant.
-  const currentTarget = frames[upTo]?.target;
-  const series = [];
-
-  if (currentTarget) {
-    for (let i = 0; i <= upTo; i++) {
-      const f = frames[i];
-      const value = f && f.market
-        ? f.market[currentTarget]
-        : null;
-
-      if (value != null) {
-        series.push([f.week, value]);
-      }
-    }
-  }
-  const svg = $("chart");
-  if (!series.length) { svg.innerHTML = ""; return; }
-  const seen = new Map();
-  for (const [w, v] of series) seen.set(w, v);
-  const pts = [...seen.entries()].sort((a, b) => a[0] - b[0]);
-
-  const W = 520, H = 150, pad = 10;
-  const maxY = Math.max(FLOOR * 1.5, ...pts.map(p => p[1])) * 1.1;
-  const x = w => pad + (w / Math.max(1, horizon)) * (W - pad * 2);
-  const y = v => H - pad - (v / maxY) * (H - pad * 2);
-  const line = pts.map(([w, v], i) => `${i ? "L" : "M"}${x(w).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-  const area = `${line} L${x(pts[pts.length - 1][0]).toFixed(1)},${H - pad} L${x(pts[0][0]).toFixed(1)},${H - pad} Z`;
-  svg.innerHTML = `
-    <path d="${area}" fill="rgba(111,168,220,.14)"/>
-    <path d="${line}" fill="none" stroke="#6fa8dc" stroke-width="2"
-          stroke-linejoin="round" stroke-linecap="round"/>
-    <line x1="${pad}" x2="${W - pad}" y1="${y(FLOOR).toFixed(1)}" y2="${y(FLOOR).toFixed(1)}"
-          stroke="#e0a458" stroke-width="1" stroke-dasharray="4 4"/>
-    <circle cx="${x(pts[pts.length - 1][0]).toFixed(1)}" cy="${y(pts[pts.length - 1][1]).toFixed(1)}"
-            r="3.5" fill="#6fa8dc"/>`;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-function renderEvents(events) {
-  $("feed").innerHTML = events.map(e => {
-    const adapt = ADAPT.has(e.kind);
-    const cls = `ev ${e.kind}` + (adapt ? ` adapt ${e.kind}` : "");
-    const because = e.because ? `<div class="b">${escapeHtml(e.because)}</div>` : "";
-    return `<div class="${cls}">
-        <div class="w">wk ${e.week}</div>
-        <div><span class="k">${escapeHtml(e.kind)}</span>
-             <div class="s">${escapeHtml(e.summary)}</div>${because}</div>
-      </div>`;
-  }).join("");
-  const feed = $("feed");
-  feed.scrollTop = feed.scrollHeight;
-}
-
-function show(i) {
-  if (i < 0 || i >= frames.length) return;
-  idx = i;
-  const f = frames[i];
-  $("wk").textContent = `week ${f.week}`;
-  $("node").textContent = f.node || "";
-  $("target").textContent = f.target || "—";
-  $("rationale").textContent = f.rationale || "";
-  $("rbar").style.width = Math.round(f.readiness * 100) + "%";
-  $("rpct").textContent = Math.round(f.readiness * 100) + "%";
-  $("postings").textContent = f.postings ?? "—";
-  $("apps").textContent = f.applications;
-  $("months").textContent = f.months_to_ready ?? "—";
-  $("conf").textContent = f.confidence == null ? "—" : Math.round(f.confidence * 100) + "%";
-  drawChart(i, f.horizon);
-  renderEvents(f.events || []);
-  if (f.finished) {
-    // The graph now records WHY a case stopped, so the status can say it
-    // plainly instead of the page guessing from an empty string. Adaptations
-    // are counted alongside it: two of them and no offer is a very different
-    // result from a run where nothing ever happened, and the old wording made
-    // both look like plain failure.
-    const adaptations = (f.events || []).filter(e => ADAPT.has(e.kind) && e.kind !== "offer").length;
-    const ending = f.outcome === "placed"
-      ? "placed"
-      : `no offer in ${f.horizon} weeks`;
-    $("status").textContent = `finished — ${adaptations} adaptation${adaptations === 1 ? "" : "s"}, ${ending}`;
-  }
-  syncControls();
-}
-
-function syncControls() {
-  $("scrub").max = String(Math.max(0, frames.length - 1));
-  $("scrub").value = String(Math.max(0, idx));
-  $("count").textContent = `${idx + 1} / ${frames.length}`;
-  $("play").textContent = playing ? "Pause" : "Play";
-}
-
-function tick() {
-  if (playing && idx < frames.length - 1) show(idx + 1);
-  else syncControls();
-}
-
-function restartTimer() {
-  if (timer) clearInterval(timer);
-  timer = setInterval(tick, interval);
-}
-
-$("play").onclick = () => {
-  // Replaying from the start once finished is what you want between takes.
-  if (!playing && idx >= frames.length - 1 && frames.length) show(0);
-  playing = !playing;
-  syncControls();
-};
-$("speed").onchange = e => { interval = Number(e.target.value); restartTimer(); };
-$("back").onclick = () => { playing = false; show(idx - 1); };
-$("fwd").onclick = () => { playing = false; show(idx + 1); };
-$("scrub").oninput = e => { playing = false; show(Number(e.target.value)); };
-
-document.addEventListener("keydown", e => {
-  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
-  if (e.code === "Space") { e.preventDefault(); $("play").click(); }
-  if (e.code === "ArrowLeft") $("back").click();
-  if (e.code === "ArrowRight") $("fwd").click();
-});
-
-const es = new EventSource("/events");
-es.onopen = () => { $("status").textContent = "live"; };
-es.onmessage = ev => {
-  frames.push(JSON.parse(ev.data));
-  if (idx < 0) show(0);
-  else syncControls();
-};
-es.onerror = () => { $("status").textContent = "disconnected"; };
-
-restartTimer();
-</script>
-</body>
-</html>
-"""
+    Everything the page needs to know about HOW it is being run -- live or
+    replay, the pacing multiplier, the viability floor -- arrives in one JSON
+    blob rather than as string substitutions, which is what __INTERVAL_MS__
+    used to be.
+    """
+    blob = json.dumps(config)
+    return PAGE_FILE.read_text(encoding="utf-8").replace(
+        "<script>\n\"use strict\";",
+        f"<script>window.CONFIG = {blob};</script>\n<script>\n\"use strict\";",
+        1,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -530,25 +348,49 @@ def _replay(bus: Broadcast, path: Path) -> None:
     to a frame the server had not sent yet, and pausing would only stall the
     render while the buffer kept filling. So the server delivers, the client
     plays. The small delay is just politeness to the socket.
+
+    Frames from before the `kind` tag are stamped on the way past, so a
+    recording made by an older build still replays.
     """
     for frame in json.loads(path.read_text()):
-        bus.publish(frame)
+        bus.publish({"kind": "frame", **frame})
         time.sleep(0.01)
+
+
+def _viability_floor() -> int:
+    """The postings threshold the planner and the drift trigger both use.
+
+    Imported rather than restated: planner.VIABILITY_FLOOR and
+    clock.has_drifted's default already have to agree, and a third copy in the
+    page would be the one nobody remembers to change. Imported lazily so
+    --replay still starts without pulling the model stack in.
+    """
+    from ..agents.planner import VIABILITY_FLOOR
+
+    return VIABILITY_FLOOR
 
 
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    # Seconds per frame the page STARTS at; the speed selector overrides it
-    # live. Filming usually wants this slower than feels right while building.
-    interval_ms = 700
-    if "--speed" in argv:
-        i = argv.index("--speed")
+    # A multiplier on every recorded gap. The page takes its pace from the run
+    # itself, so this is the only pacing knob left — and it is a flag rather
+    # than an on-screen control because during a LIVE run there is nothing to
+    # speed up: the pace is however long the model takes.
+    pace = 1.0
+    if "--pace" in argv:
+        i = argv.index("--pace")
         try:
-            interval_ms = max(50, int(float(argv[i + 1]) * 1000))
+            pace = float(argv[i + 1])
         except (IndexError, ValueError):
-            sys.exit("--speed takes seconds per frame, e.g. --speed 1.5")
+            sys.exit("--pace takes a multiplier on the recorded gaps, e.g. --pace 0.5")
+        if pace <= 0:
+            sys.exit("--pace must be greater than 0")
         del argv[i:i + 2]
+
+    offline = "--offline" in argv
+    if offline:
+        argv.remove("--offline")
 
     replay_path: Path | None = None
     if "--replay" in argv:
@@ -561,8 +403,24 @@ def main(argv: list[str] | None = None) -> None:
                 "Do one live run first: uv run python -m src.ui.web"
             )
 
+    config = {
+        # Both modes play from the buffer at the recorded pace; the page only
+        # needs the mode to decide whether a live activity banner applies.
+        "mode": "replay" if replay_path else "live",
+        "pace": pace,
+        "floor": _viability_floor(),
+        # The least time one simulated week may take on screen. Weeks with no
+        # model call in them are pure Python and land microseconds apart, so
+        # without a floor the case jumps from week 0 to week 10 and the
+        # training happening in between is never legible. Six months is the
+        # span the product claim rests on — each week has to read as a week.
+        "minWeekMs": MIN_WEEK_MS,
+        # Used only for recordings made before frames carried their own timing.
+        "fallbackMs": 700,
+    }
+
     bus = Broadcast()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(bus, interval_ms))
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(bus, config))
     server.daemon_threads = True
 
     def work() -> None:
@@ -570,13 +428,27 @@ def main(argv: list[str] | None = None) -> None:
             if replay_path:
                 _replay(bus, replay_path)
             else:
-                run_case(bus.publish)
-                RECORDING.write_text(json.dumps(bus.history))
-                print(f"\n  recording saved to {RECORDING.name}")
-                print("  replay it with:  uv run python -m src.ui.web --replay\n")
+                run_case(bus.publish, offline=offline)
+                # Only the frames. Activity messages are the live channel; a
+                # replay reads the same calls back off each frame, so recording
+                # them too would just be a second copy to keep in step.
+                frames = [m for m in bus.history if m.get("kind") == "frame"]
+                # An offline run is stub output with no real timings, and
+                # writing it over .last_run.json would silently replace the one
+                # good live take with something that must never be filmed. It
+                # gets its own file, so a --replay after a day of UI work is
+                # still the real run.
+                path = OFFLINE_RECORDING if offline else RECORDING
+                path.write_text(json.dumps(frames))
+                print(f"\n  recording saved to {path.name}")
+                print(f"  replay it with:  uv run python -m src.ui.web --replay {path.name}\n"
+                      if offline else
+                      "  replay it with:  uv run python -m src.ui.web --replay\n")
         except Exception as exc:  # a failed run should not leave a blank page
             bus.publish({
+                "kind": "frame",
                 "week": 0, "horizon": clock.HORIZON_WEEKS, "node": "error",
+                "t": 0.0, "calls": [], "plan": None,
                 "target": None, "rationale": f"{type(exc).__name__}: {exc}",
                 "readiness": 0.0, "postings": None, "market": {}, "applications": 0,
                 "events": [], "outcome": "", "done": True, "finished": True,
@@ -584,7 +456,10 @@ def main(argv: list[str] | None = None) -> None:
             raise
 
     url = f"http://127.0.0.1:{PORT}/"
-    mode = f"replaying {replay_path.name}" if replay_path else "live run"
+    if replay_path:
+        mode = f"replaying {replay_path.name}"
+    else:
+        mode = "live run, stub agents" if offline else "live run"
     print(f"\n  {url}  ({mode})")
     print("  ctrl-c to stop\n")
 
