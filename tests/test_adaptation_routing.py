@@ -170,3 +170,52 @@ def test_an_adaptation_still_outranks_the_cadence():
     """A diagnosed pattern is acted on immediately, not at the next batch."""
     sent = [outcome(PLACEMENT_WEEK, Stage.SCREENING) for _ in range(3)]
     assert route(state(week=PLACEMENT_WEEK + 1, applications=sent)) == "reposition"
+
+
+# --------------------------------------------------------------------------
+# How a case ENDS — contracts.py names two ways, and both must be recorded
+# --------------------------------------------------------------------------
+
+
+def test_a_case_that_never_places_says_so(monkeypatch):
+    """An empty outcome cannot be told apart from a run still in progress.
+
+    contracts.py has always advertised "ran_out_of_runway"; before this it was
+    documentation for a value nothing ever set.
+    """
+    final = run_with(monkeypatch, Stage.SCREENING)
+
+    assert final["outcome"] == "ran_out_of_runway"
+
+
+def test_an_offer_is_not_overwritten_by_the_final_tick(monkeypatch):
+    """The horizon guard must not clobber a placement that already landed."""
+    final = build(checkpointer=memory_checkpointer()).invoke(
+        initial_state(),
+        config={"recursion_limit": 200, "configurable": {"thread_id": "placed"}},
+    )
+
+    assert final["outcome"] == "placed"
+
+
+def test_a_rewrite_is_tested_in_the_week_it_is_written(monkeypatch):
+    """A reposition must be followed immediately by a batch carrying it.
+
+    Not a nicety. The rejection pattern needs three rejections at one stage, so
+    in a real run it fired at week 25; the next scheduled batch would have been
+    week 27 and route() ends the case at 26. The second adaptation event was
+    firing and then never being given a chance to pay off, which is why no run
+    could end placed. If this fails, that is back.
+    """
+    final = run_with(monkeypatch, Stage.SCREENING)
+
+    weeks = {e.kind: e.week for e in final["events"] if e.kind == "reposition"}
+    assert weeks, "no reposition happened, so this test proves nothing"
+    rewrite_week = weeks["reposition"]
+
+    applied = [e.week for e in final["events"] if e.kind == "apply"]
+    assert rewrite_week in applied, (
+        f"rewrote at week {rewrite_week} but the next batch went out at "
+        f"{[w for w in applied if w > rewrite_week] or 'never'} — "
+        "the rewrite was never sent to anyone"
+    )

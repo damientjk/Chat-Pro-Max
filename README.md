@@ -43,6 +43,20 @@ every adaptation's reason.
 it with no key and no network. Get one good live run, then film the replay —
 a take can't be spoilt by a rate limit.
 
+## Score it against the baseline
+
+```bash
+uv run python -m src.eval.harness
+```
+
+Runs the agent and the one-shot baseline over the same six personas and prints
+the comparison — dead paths caught, months saved, training spend avoided, and
+how many of each ended placed. This is where the benefits slide's numbers come
+from; every one of them is computed here rather than asserted.
+
+Needs a key, and it is a full case per persona, so run it on Bedrock rather
+than Groq's free tier — six cases will not fit inside 8000 tokens a minute.
+
 **The test suite still runs keyless, and always should.** `tests/conftest.py`
 swaps the five model-calling agents for deterministic doubles, so the graph is
 tested offline, in milliseconds, without spending tokens or failing because a
@@ -77,36 +91,59 @@ default — see [`PLAN.md`](PLAN.md) for the setup and the cost numbers.
 ## What it prints today
 
 ```
-  wk  0      found 3 capabilities
-  wk  0      target: Supply Chain Data Analyst
-  wk 10  !!  Supply Chain Data Analyst postings fell to 14
-            because below the floor we set for a viable target
-  wk 10  ->  switched to Logistics Systems Analyst
-            because still hiring, and reuses the SQL work already done
-  wk 18      3 applications sent
-  wk 19  ->  rewrote how we describe their experience
-            because the last 3 applications all died at resume screening
-  wk 20  **  offer: Logistics Systems Analyst
+SIX-MONTH ADAPTATION TIMELINE
+-----------------------------
+Week  0 | TARGET      | target: Supply Chain Data Analyst
+        Reason: hiring holds at 133 postings, and the reconciliation experience transfers
+Week 10 | DRIFT       | Supply Chain Data Analyst postings fell to 12
+        Reason: below the floor we set for a viable target
+Week 10 | REPLAN      | switched to Customer Success Coordinator
+        Reason: still hiring — and keeps the SQL, dashboarding work already done
+Week 18 | APPLICATION | 3 applications sent
+Week 19 | REPOSITION  | rewrote how we describe their experience
+        Reason: the last 3 applications all died at resume screening
+Week 21 | OFFER       | offer: Customer Success Coordinator
 ```
 
-Those two `->` lines are the product. Everything else is scaffolding around them.
+`DRIFT → REPLAN` and `REPOSITION` are the product. Everything else is
+scaffolding around them. Both carry a `Reason:` line, because an adaptation
+nobody can see the reason for may as well not have happened.
+
+The role names come from the model reading a live market snapshot, so they vary
+between runs. What does not vary is the shape: a target that stops hiring gets
+abandoned, and a rejection pattern rewrites the pitch.
 
 ## The graph
 
 ```
-START -> intake -> target -> plan -> advance_week
-                                         |
-                                     route()          <- triggers.py, pure Python
-                                         |
-          +--------------+---------------+--------------+
-          |              |               |              |
-        drift        reposition        apply        continue --+
-          |              |               |                     |
-        replan       reposition      placement                 |
-          |              |               |                     |
-          +--------------+---------------+---------------------+
-                                  back to advance_week
+START -> intake -> target -> plan -> advance_week <-------------+
+                                          |                     |
+                                      route()   <- triggers.py, pure Python
+                                          |                     |
+   +---------+-------------+--------------+---------+---------+ |
+   |         |             |              |         |         | |
+ drift   replan_gap    retarget      reposition   apply    continue
+   |         |             |              |         |         |
+ replan  replan_gap    retarget      reposition   apply       -+
+   |         |             |              |         |
+   |         |             |              +-> apply |
+   |         |             |                   |    |
+   +---------+-------------+-------------------+----+----------+
+                                                                |
+                                        every node returns here -+
+
+                              route() -> END when an offer lands
+                              or week 26 arrives
 ```
+
+**The market moved** takes the `drift` edge. **The rejections share a shape**
+takes one of three, depending on what the pattern says: dying at screening
+means the pitch is wrong (`reposition`), losing at the technical round means
+the plan missed a skill (`replan_gap`), and a rewrite that still cannot pass a
+screen means the target itself is wrong (`retarget`).
+
+A reposition goes straight to `apply` in the same week: a rewrite exists to
+be tested, and the horizon can arrive before the next scheduled batch would.
 
 `route()` has **no model call in it**. Control flow stays deterministic,
 unit-testable without a key, and identical across every take of the demo video.
@@ -136,37 +173,18 @@ non-technical: what it does, why it matters, and who is building which part.
 `contracts.py` is the only file more than one person depends on. Changing it
 after Day 1 is a whole-team decision.
 
-### R1 — signals and baseline
-
-Built in this order, each one usable on its own:
-
-1. `src/baseline/naive.py` — one-shot baseline recommender.
-2. `src/signals/rejection.py` — repeated-rejection re-plan signal.
-3. `src/signals/actions.py` — rejection-stage-specific re-plan guidance.
-4. `src/signals/outcomes.py` — baseline-versus-agent benefit metrics.
-5. `src/signals/events.py` — JSON-safe re-plan event for R2's second edge.
-6. `src/r1_workflow.py` — typed handoff of R1 evidence to R2.
-7. `evidence.md` — source log for claims in the deck.
-
-These now read the shared types from `src/contracts.py` — `SkillInventory`,
-`TargetRole`, `ApplicationOutcome` and `Stage` — rather than the temporary
-duck-typed shims they were written against. The baseline rule is unchanged: it
-selects once and never re-plans.
-
-```bash
-uv run python -m scripts.r1_demo
-```
-
 ## Where the stubs are
 
-Every stub is marked `TODO(Rn)` with the owner. Find yours:
+Every sub-agent now makes a real model call. What is left is marked `TODO(Rn)`
+with the owner — mostly tuning and numbers to record, not unwritten code:
 
 ```bash
 grep -rn "TODO(R" src/
 ```
 
-Replacing a stub never requires touching the graph. That is the whole point of
-the shape.
+Replacing a stub never required touching the graph, and it did not: the five
+agent functions were swapped one at a time behind fixed signatures, and
+`graph.py` was not edited for any of them. That is the whole point of the shape.
 
 ## Pinned dependencies
 

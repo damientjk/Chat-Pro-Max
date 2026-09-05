@@ -453,7 +453,16 @@ function show(i) {
   drawChart(i, f.horizon);
   renderEvents(f.events || []);
   if (f.finished) {
-    $("status").textContent = f.outcome ? `finished — ${f.outcome}` : "finished — ran out of runway";
+    // The graph now records WHY a case stopped, so the status can say it
+    // plainly instead of the page guessing from an empty string. Adaptations
+    // are counted alongside it: two of them and no offer is a very different
+    // result from a run where nothing ever happened, and the old wording made
+    // both look like plain failure.
+    const adaptations = (f.events || []).filter(e => ADAPT.has(e.kind) && e.kind !== "offer").length;
+    const ending = f.outcome === "placed"
+      ? "placed"
+      : `no offer in ${f.horizon} weeks`;
+    $("status").textContent = `finished — ${adaptations} adaptation${adaptations === 1 ? "" : "s"}, ${ending}`;
   }
   syncControls();
 }

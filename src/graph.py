@@ -155,6 +155,20 @@ def advance_week(state: CaseState) -> dict:
                   because="the plan step scheduled for this week is complete, so "
                           "it counts as capability from now on"),
         ]
+
+    # The horizon is the end of the runway, and it is reached here — route()
+    # sees it a moment later and ends the case, but a router returns an edge
+    # name, not state, so this is the only place that can record WHY the case
+    # stopped. contracts.py has always advertised "ran_out_of_runway" as one of
+    # the two ways a case can end; until now nothing set it, so an unplaced
+    # candidate ended with an empty string and every reader had to guess
+    # whether that meant "not placed" or "still running".
+    #
+    # Guarded on `done` so a week-26 offer is not overwritten by the tick that
+    # follows it.
+    if week >= clock.HORIZON_WEEKS and not state.get("done"):
+        update["outcome"] = "ran_out_of_runway"
+
     return update
 
 
@@ -403,8 +417,21 @@ def build(checkpointer=None):
         },
     )
 
-    # Everything loops back to the clock.
-    for node in ("replan", "replan_gap", "retarget", "reposition", "apply"):
+    # A reposition goes STRAIGHT to apply, in the same week, rather than back
+    # to the clock. A rewrite exists to be tested, and waiting out the normal
+    # application cadence to find out whether it worked is wrong on its own
+    # terms — but it was also fatal here. The rejection pattern needs three
+    # rejections at one stage to fire, which took until week 25 in a real run;
+    # the next scheduled batch would have been week 27, and route() ends the
+    # case at 26. The second adaptation event was firing and then never being
+    # given a chance to pay off, so no run could ever end placed.
+    #
+    # Only reposition. replan_gap and retarget produce a NEW plan with new
+    # gaps, and applying before any of that training has happened would be
+    # applying for a role the candidate cannot yet do.
+    g.add_edge("reposition", "apply")
+
+    for node in ("replan", "replan_gap", "retarget", "apply"):
         g.add_edge(node, "advance_week")
 
     return g.compile(checkpointer=checkpointer)
