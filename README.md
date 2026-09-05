@@ -30,18 +30,33 @@ lives at the repo root, is gitignored, and is read automatically.
 ```bash
 uv run python -m src.ui.web            # live web timeline at localhost:8000
 uv run python -m src.ui.web --replay   # replay the last run — no key, no network
+uv run python -m src.ui.web --offline  # real graph, stub agents — no key, no tokens
 uv run python -m scripts.preview_ui    # terminal timeline, stub data, no key
 ```
 
 The web view streams the case over Server-Sent Events using only the Python
-standard library — no server framework, nothing added to `requirements.txt`. It
-shows the postings chart against the viability floor (crossing it is what fires
-the re-plan), a readiness bar that resets on each pivot, and the timeline with
-every adaptation's reason.
+standard library — no server framework, nothing added to `requirements.txt`.
+It shows four things at once:
+
+- **why this role** — the week's postings for every candidate role, the
+  viability floor, and the planner's own reason for the one it picked
+- **the training plan** — the actual steps, each ticking off as its week
+  arrives, and what a re-plan carried forward
+- **agent activity** — every model call as it happens: which agent, what it was
+  asked, how long it took, what it decided, and which parts of the system are
+  deterministic Python instead
+- **the postings chart** — each targeted role against the floor, so the week-10
+  collapse that forces the pivot is visible rather than asserted
+
+There is no speed control, because the pace comes from the run. Every frame
+records when it landed, so a replay reproduces the real gaps — a long model
+call is a real pause with the agent that caused it named on screen. `--pace 0.5`
+scales those gaps for filming.
 
 **Every live run records itself to `.last_run.json`**, and `--replay` re-streams
 it with no key and no network. Get one good live run, then film the replay —
-a take can't be spoilt by a rate limit.
+a take can't be spoilt by a rate limit. `--offline` records separately, to
+`.offline_run.json`, so iterating on the UI can never overwrite the good take.
 
 ## Score it against the baseline
 

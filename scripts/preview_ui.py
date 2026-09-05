@@ -25,8 +25,12 @@ from src.run_demo import initial_state
 from src.ui.timeline import render, render_readiness
 
 
-def _install_doubles() -> None:
-    """Swap the model-calling agents for the deterministic test doubles."""
+def install_doubles() -> None:
+    """Swap the model-calling agents for the deterministic test doubles.
+
+    Public because src/ui/web.py's --offline mode needs exactly this. One
+    installer, so a double added here reaches both previews.
+    """
     import src.agents.archaeologist as archaeologist
     import src.agents.placement as placement
     import src.agents.planner as planner
@@ -40,7 +44,7 @@ def _install_doubles() -> None:
 
 
 def main() -> None:
-    _install_doubles()
+    install_doubles()
 
     app = build(checkpointer=memory_checkpointer())
     final = app.invoke(
