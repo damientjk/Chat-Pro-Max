@@ -562,26 +562,31 @@ function activityHtml(f) {
 // The working indicator
 // ---------------------------------------------------------------------------
 
-function showWorking(agent, task, elapsedFrom, fixedSeconds) {
+function showWorking(agent, task, elapsedFrom, recordedSeconds) {
   $("wagent").textContent = agent;
   $("wtask").textContent = task;
   $("working").hidden = false;
   clearInterval(elapsedTimer);
-  if (fixedSeconds != null) {
-    // Replaying: the call already happened and we know exactly how long it
-    // took, so count up towards the real figure rather than inventing one.
-    const started = performance.now();
-    elapsedTimer = setInterval(() => {
-      const e = Math.min(fixedSeconds, (performance.now() - started) / 1000);
-      $("welapsed").textContent = e.toFixed(1) + "s";
-    }, 100);
-    $("welapsed").textContent = "0.0s";
-  } else {
-    elapsedTimer = setInterval(() => {
-      $("welapsed").textContent = ((performance.now() - elapsedFrom) / 1000).toFixed(1) + "s";
-    }, 100);
-    $("welapsed").textContent = "0.0s";
+  elapsedTimer = null;
+
+  if (recordedSeconds != null) {
+    // Playing back a call that has already happened: show what it ACTUALLY
+    // took, as a fixed figure. It used to tick up real wall-clock time during
+    // the pause — but gapBefore caps that pause at a few seconds, so every
+    // call longer than the cap ended on exactly the same number and looked
+    // frozen there. Worse, that number was the length of the compressed
+    // pause, presented as though it were the model's thinking time: a
+    // twenty-eight second call read as "4.0s". A counter that cannot run for
+    // as long as the thing it is timing should not be a counter.
+    $("welapsed").textContent = recordedSeconds.toFixed(1) + "s";
+    return;
   }
+
+  // Live, and the call is genuinely in flight: this is real elapsed time.
+  $("welapsed").textContent = "0.0s";
+  elapsedTimer = setInterval(() => {
+    $("welapsed").textContent = ((performance.now() - elapsedFrom) / 1000).toFixed(1) + "s";
+  }, 100);
 }
 
 function hideWorking() {
@@ -699,15 +704,26 @@ function gapBefore(i) {
 function schedule() {
   clearTimeout(timer);
   timer = null;
-  if (!playing || idx >= frames.length - 1) return;
+  if (!playing || idx >= frames.length - 1) {
+    // Nothing more to play. Hide the banner unless a live run has simply
+    // caught up with itself — there, the case is still being decided and the
+    // activity channel owns what the banner says.
+    const here = frames[idx];
+    if (!playing || !LIVE || (here && here.finished)) hideWorking();
+    return;
+  }
 
   const next = idx + 1;
   const wait = gapBefore(next);
 
   // A pause of any length is a model call finishing. Name the agent behind it,
-  // so the wait reads as work rather than as the page having stalled.
-  const call = (frames[next].calls || [])[0];
-  if (call && wait > MIN_GAP + 100) showWorking(call.agent, call.task, null, call.seconds);
+  // so the wait reads as work rather than as the page having stalled. Where a
+  // node made several calls they all land on one frame, and the longest is the
+  // one the pause is actually about — naming the first meant a 1.4s reformat
+  // fronting for the 11s screening batch behind it.
+  const calls = frames[next].calls || [];
+  const call = calls.reduce((a, b) => ((b.seconds || 0) > (a.seconds || 0) ? b : a), calls[0]);
+  if (call && wait > MIN_GAP + 100) showWorking(call.agent, call.task, null, call.seconds || 0);
   else hideWorking();
 
   timer = setTimeout(() => {
