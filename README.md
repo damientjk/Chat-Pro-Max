@@ -207,7 +207,7 @@ would not change if the market feed were.
 
 ## Also in this repo
 
-- [`EXPLAINER.md`](EXPLAINER.md) — the same project with no jargon
+- [`docs/EXPLAINER.md`](docs/EXPLAINER.md) — the same project with no jargon
 - [`evidence.md`](evidence.md) — every external figure, with publisher and date
 - `pyproject.toml` + `uv.lock` are the source of truth for dependencies;
   `requirements.txt` is generated from them with

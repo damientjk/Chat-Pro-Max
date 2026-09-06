@@ -27,7 +27,7 @@ def run_case(thread: str = "test"):
 
 
 def test_both_adaptation_events_fire_and_the_candidate_is_placed():
-    """PLAN.md's non-negotiable Day 3 gate. Everything else is detail."""
+    """docs/PLAN.md's non-negotiable Day 3 gate. Everything else is detail."""
     _, _, final = run_case()
     kinds = [e.kind for e in final["events"]]
 
