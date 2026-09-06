@@ -68,11 +68,24 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 GROQ_TIMEOUT = float(os.environ.get("GROQ_TIMEOUT", "60"))
 
 # Kept as MODEL_ID because labs 01-08 (Session 2 and take-home) import that name.
-MODEL_ID = os.environ.get(
-    "BEDROCK_MODEL", "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-)
+#
+# Bedrock hosts OpenAI's OPEN-WEIGHT models, which is what our account has
+# access to today: openai.gpt-oss-20b-1:0 and openai.gpt-oss-120b-1:0. These are
+# not GPT-4 or GPT-5 -- those proprietary models are not on Bedrock at all. The
+# 120b is the default because Bedrock is the path the judged runs take and it is
+# the stronger of the two; export BEDROCK_MODEL to use the 20b instead.
+#
+# Same family as the Groq development model above, which is deliberate: prompts
+# tuned against gpt-oss on Groq behave the same way here, rather than the switch
+# quietly changing how every agent responds.
+MODEL_ID = os.environ.get("BEDROCK_MODEL", "openai.gpt-oss-120b-1:0")
+
+# us-east-1 because that is where the OpenAI models are enabled for this
+# account. Bedrock model access is granted per model AND per region, so the same
+# call that works here fails in ap-southeast-1 with an access error rather than
+# a missing-model one.
 REGION = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get(
-    "AWS_REGION", "ap-southeast-1"
+    "AWS_REGION", "us-east-1"
 )
 
 
@@ -127,7 +140,7 @@ def require_aws_credentials() -> None:
             "    export AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...\n"
             "    aws sso login --profile <your-profile>\n\n"
             f"  Region currently resolves to: {REGION}\n"
-            "  Set it with: export AWS_DEFAULT_REGION=ap-southeast-1\n\n"
+            "  Set it with: export AWS_DEFAULT_REGION=us-east-1\n\n"
             "  Session 1 needs none of this. If you are on Day 1, you have\n"
             "  LLM_PROVIDER=bedrock set by mistake — unset it."
         )
@@ -227,8 +240,18 @@ def structured(schema, temperature: float = 0.0, attempts: int = 3, **kwargs):
     runnable = chat_model(temperature=temperature, **kwargs).with_structured_output(schema)
 
     if PROVIDER != "groq":
-        # Bedrock is the path we run when it matters, and it has not shown this
-        # failure. Left unwrapped rather than guessing at its error taxonomy.
+        # UNRESOLVED, and it matters for the eval sweep. This guard was written
+        # when Bedrock meant a different model family that had not shown the
+        # malformed-tool-call failure. Bedrock now runs openai.gpt-oss-120b --
+        # the same family as the Groq development model, which fails this way
+        # often enough that the retry above exists for it. So the reasoning that
+        # justified leaving Bedrock unwrapped no longer holds.
+        #
+        # Still unwrapped rather than guessing: botocore's error taxonomy is a
+        # ClientError carrying a code, not a class per failure, and untested
+        # exception handling on the path the judged runs take is its own risk.
+        # Whoever runs the six-persona sweep should watch for a mid-sweep
+        # failure and, if one appears, add a ClientError retry here.
         return runnable
 
     from groq import APIConnectionError, BadRequestError, InternalServerError, RateLimitError
