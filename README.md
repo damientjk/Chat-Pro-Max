@@ -1,7 +1,7 @@
 # Reskilling-to-Placement Agent
 
 An agent that plans a mid-career transition, **re-plans when the job market
-moves**, and places — treating every rejection as evidence that updates the plan.
+moves**, and places, treating every rejection as evidence that updates the plan.
 
 > A recommender can suggest a course. It cannot notice in month three that the
 > role you're training for stopped hiring, and rebuild the plan around what's
@@ -11,16 +11,16 @@ moves**, and places — treating every rejection as evidence that updates the pl
 
 14,400 people were retrenched in Singapore in 2025, and six months on, around
 40% of them have not re-entered employment. For workers in their forties the
-re-entry rate has historically fallen further still. The support exists — the
+re-entry rate has historically fallen further still. The support exists: the
 SkillsFuture Level-Up Programme puts a S$4,000 credit top-up in the hands of
-mid-career workers over 40 — but a credit only helps if it is spent on a role
+mid-career workers over 40. But a credit only helps if it is spent on a role
 that is still hiring when the training finishes.
 
 Sources for every figure above, with publisher and date, are in
-[`evidence.md`](evidence.md).
+[`docs/evidence.md`](docs/evidence.md).
 
-Six months is long enough for the target to disappear. That gap — between a plan
-made in month one and a market that has moved by month four — is what this agent
+Six months is long enough for the target to disappear. That gap, between a plan
+made in month one and a market that has moved by month four, is what this agent
 exists to close.
 
 ## What it actually does
@@ -34,7 +34,7 @@ floor of 30 postings a week. The agent abandons it, picks a target that is still
 hiring, and carries the finished training forward rather than starting over.
 
 **The rejections share a shape.** Three applications dying at the same stage is a
-signal, and which stage decides the fix — dying at resume screening means the
+signal, and which stage decides the fix. Dying at resume screening means the
 pitch is wrong, losing at the technical round means the plan missed a skill, and
 a rewritten pitch that still cannot pass a screen means the target itself is
 wrong. Each takes a different edge in the graph.
@@ -47,10 +47,10 @@ reason for may as well not have happened.
 ```bash
 uv sync
 uv run pytest                          # 66 tests, no API key needed
-uv run python -m src.ui.web            # the live run — needs a key
+uv run python -m src.ui.web            # the live run (needs a key)
 ```
 
-The demo makes real model calls, so it needs a Groq key — free, no card, from
+The demo makes real model calls, so it needs a Groq key. Free, no card, from
 [console.groq.com](https://console.groq.com):
 
 ```bash
@@ -70,15 +70,15 @@ uv run python -m src.run_demo          # the same case, in the terminal
 ## What you see
 
 The web view streams the case to a browser over Server-Sent Events using only
-the Python standard library — no server framework, no CDN, nothing added to the
+the Python standard library: no server framework, no CDN, nothing added to the
 dependency list. Four things are on screen at once:
 
-- **why this role** — every candidate role's postings that week, the viability
+- **why this role**: every candidate role's postings that week, the viability
   floor, and the planner's own stated reason for the one it picked
-- **the training plan** — the actual steps, each ticking off as its week arrives
-- **agent activity** — every model call: which agent, what it was asked, how long
-  it took, and what it decided
-- **the postings chart** — each targeted role against the floor, so the week-10
+- **the training plan**: the actual steps, each ticking off as its week arrives
+- **agent activity**: every model call, naming which agent, what it was asked,
+  how long it took, and what it decided
+- **the postings chart**: each targeted role against the floor, so the week-10
   collapse that forces the pivot is visible rather than asserted
 
 There is no speed control, because the pace comes from the run itself. Every
@@ -88,7 +88,7 @@ simulated week also holds the screen for at least a second, so six months reads
 as six months. A full run plays in about a minute; `--pace` scales it.
 
 Every live run records itself to `.last_run.json`, and `--replay` re-streams it
-with no key and no network — so a rate limit cannot spoil a take.
+with no key and no network, so a rate limit cannot spoil a take.
 
 ## Does it beat just asking a model once?
 
@@ -103,7 +103,7 @@ many cases of each ended in a placement.
 
 Every number on the benefits slide is computed here rather than asserted.
 
-This is a full case per persona, so run it on Bedrock — six cases will not fit
+This is a full case per persona, so run it on Bedrock. Six cases will not fit
 inside Groq's free tier of 8000 tokens a minute.
 
 ## A run that placed
@@ -155,7 +155,7 @@ LangGraph supervises; the sub-agents are the intelligence. **`route()` makes no
 model call.** Control flow is deterministic, unit-testable without a key, and
 identical across every take of the demo.
 
-A reposition goes straight to `apply` in the same week — a rewrite exists to be
+A reposition goes straight to `apply` in the same week. A rewrite exists to be
 tested, and the horizon can arrive before the next scheduled batch would.
 
 The test suite runs keyless by design: `tests/conftest.py` swaps the five
@@ -179,7 +179,7 @@ behave the same on either side.
 
 | Path | What |
 |---|---|
-| `src/contracts.py` | Shared types — the one file everyone depends on |
+| `src/contracts.py` | Shared types, the one file everyone depends on |
 | `src/graph.py`, `src/triggers.py` | The supervisor and its routing |
 | `src/agents/` | Skill archaeologist, planner, placement |
 | `src/market/`, `src/eval/` | Synthetic postings, personas, scoring harness |
@@ -207,8 +207,8 @@ would not change if the market feed were.
 
 ## Also in this repo
 
-- [`docs/EXPLAINER.md`](docs/EXPLAINER.md) — the same project with no jargon
-- [`evidence.md`](evidence.md) — every external figure, with publisher and date
+- [`docs/EXPLAINER.md`](docs/EXPLAINER.md): the same project with no jargon
+- [`docs/evidence.md`](docs/evidence.md): every external figure, with publisher and date
 - `pyproject.toml` + `uv.lock` are the source of truth for dependencies;
   `requirements.txt` is generated from them with
   `uv export --no-hashes --no-dev -o requirements.txt`
